@@ -12,6 +12,9 @@ class NodoLogro:
         self.obtenido = False
         self.quien = None             # rol de quien lo consiguió (o None: el equipo)
         self.por_camino = False       # se marcó porque consiguieron un hijo suyo
+        # Compuesto: "cualquiera de los de abajo". Se consigue de verdad con el
+        # primero de sus hijos (no queda "por el camino").
+        self.compuesto = False
 
     @property
     def visible(self):

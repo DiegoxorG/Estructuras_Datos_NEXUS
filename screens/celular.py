@@ -18,6 +18,7 @@ import zlib
 import pygame
 
 from juego.fuentes import fuente_de_tamano
+from screens.flechas import flecha_alrededor, cerca_del_borde
 from screens.paneles import partir_lineas
 from data.nexus import UMBRAL_PLANOS
 
@@ -176,22 +177,11 @@ def dibujar_lugar(screen, vista, camara, dueño, red, tiempo_ms):
         cam.center = centro
         pygame.draw.rect(screen, COLOR_LUGAR, cam, border_radius=3)
         pygame.draw.circle(screen, (255, 255, 255), centro, 4)
-        return
-    c = dueño.hitbox.center
-    dx, dy = x - c[0], y - c[1]
-    distancia = math.hypot(dx, dy) or 1
-    ux, uy = dx / distancia, dy / distancia
-    margen = 46
-    mitad_w, mitad_h = vista.width / 2 - margen, vista.height / 2 - margen
-    escala = min(mitad_w / abs(ux) if ux else 1e9, mitad_h / abs(uy) if uy else 1e9)
-    px, py = vista.centerx + ux * escala, vista.centery + uy * escala
-    angulo = math.atan2(uy, ux)
-    tam = 16
-    punta = (px + math.cos(angulo) * tam, py + math.sin(angulo) * tam)
-    izq = (px + math.cos(angulo + 2.5) * tam, py + math.sin(angulo + 2.5) * tam)
-    der = (px + math.cos(angulo - 2.5) * tam, py + math.sin(angulo - 2.5) * tam)
-    pygame.draw.polygon(screen, COLOR_LUGAR, [punta, izq, der])
-    pygame.draw.polygon(screen, COLOR_SOMBRA, [punta, izq, der], 2)
+        if not cerca_del_borde(vista, centro):
+            return
+    # Fuera de pantalla (o en el borde, donde lo tapa el HUD): una flecha
+    # alrededor del jugador (screens/flechas.py).
+    flecha_alrededor(screen, vista, camara, dueño, (x, y), COLOR_LUGAR, None, tiempo_ms)
 
 
 # -- El celular --------------------------------------------------------------------------------

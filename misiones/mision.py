@@ -2,8 +2,13 @@
 
     1. Puerta      encontrar el código en las notas y abrir la puerta (si el
                    mapa tiene una: en la Nave es la de la prisión, en MapaE2
-                   la salida de Control). El código va en una nota que se
-                   alcanza ANTES de la puerta (notas_antes_de_la_puerta).
+                   la salida de Control). El código va en una de sus notas de
+                   código que se alcance ANTES de la puerta
+                   (notas_antes_de_la_puerta, sortear_candidatas).
+                   Puede haber más puertas con código (cada una de un color,
+                   con su código y sus notas): la primera es la de la fase 1
+                   y las demás se abren cuando sea (la flecha lleva a ellas si
+                   detrás queda algo de la misión).
     2. Sabotaje    apagar las consolas de navegación (mantener la tecla).
     3. Cápsula     llevar 3 piezas a la cápsula y repararla (mantener la tecla).
                    Para repararla hacen falta los planos, que se ganan con la
@@ -20,8 +25,8 @@ Para que se pueda jugar con 2 o 3 personas:
 - sin Tecnomante, aparecen **decodificadores** para las consolas (no se gastan:
   antes eran de un solo uso y con 2 consolas y 1 decodificador en el mapa la
   misión quedaba imposible);
-- sin Forjador, aparece un **kit de herramientas** para reparar, y cualquiera
-  puede recoger piezas.
+- sin Forjador, aparece un **kit de herramientas** para reparar, y quien lo
+  lleve ve y recoge las piezas (`ve_piezas`; antes las veía cualquiera).
 El que tiene el rol lo hace más rápido que el que usa el consumible.
 
 Todo lo de la misión se pone en el mapa con el editor (Editores/editor_mapa.py).
@@ -33,7 +38,7 @@ import random
 
 import pygame
 
-from data.notas import NOTAS, NOTA_CODIGO
+from data.notas import NOTAS, NOTA_CODIGO, NOTAS_CODIGO_VACIAS
 from misiones.logros import logro
 
 
@@ -58,7 +63,9 @@ COLOR_BIEN = (96, 200, 120)
 COLOR_MAL = (245, 130, 120)
 COLOR_AVISO = (255, 214, 64)
 
-NOMBRE_CONSUMIBLE = {"decodificador": "Decodificador", "kit": "Kit de herramientas"}
+NOMBRE_CONSUMIBLE = {"decodificador": "Decodificador", "kit": "Kit de herramientas",
+                     # El Guardia de la Bahía (misiones/guardia.py).
+                     "fruta": "Fruta", "abono": "Abono"}
 
 # Cortos a propósito: van en una sola línea del HUD, y con cuatro jugadores a
 # 1280 px cada mitad tiene ~520 px para el texto (unos 50 caracteres).
@@ -70,6 +77,16 @@ TEXTO_FASE = {
     "planos": "Faltan los planos: ganen la confianza en NEXUS.",
     "huida": "¡Alerta! Todos a la cápsula.",
 }
+
+
+# Cada puerta con código tiene un color: sus notas llevan una tachuela de ese color.
+COLORES_PUERTA = [("roja", (225, 70, 70)), ("azul", (80, 150, 255)), ("verde", (90, 205, 110)),
+                  ("amarilla", (240, 205, 60)), ("morada", (185, 115, 245)), ("naranja", (255, 150, 60)),
+                  ("celeste", (110, 225, 235)), ("rosada", (245, 130, 200))]
+
+
+def color_puerta(i):
+    return COLORES_PUERTA[i % len(COLORES_PUERTA)]
 
 
 class Equipo:
@@ -100,6 +117,53 @@ def notas_antes_de_la_puerta(mundo, desde, notas, tapan):
             if any(pygame.Rect(c[0], c[1], 48, 19).colliderect(nota.inflate(40, 40)) for c in celdas)]
 
 
+def sortear_candidatas(mundo, desde, puertas, notas_puerta, notas_normales, tapan=(), adentro=()):
+    """En qué notas puede ir el código de cada puerta (rects de las puertas;
+    `notas_puerta[i]`: rects de las notas de código de la puerta i).
+
+    Una nota sirve si se llega a ella con esa puerta cerrada. Las demás puertas
+    también están cerradas, salvo las que ya se pueden abrir (su código se lee
+    antes): así una puerta puede tener sus notas detrás de otra. Si una puerta
+    no tiene notas de código (o no se llega a ninguna), su código va en una
+    nota normal alcanzable. `mundo.paredes` no debe tener las puertas.
+
+    `adentro`: puntos donde también aparece gente (donde queda el que sale de
+    una celda). Así una puerta puede tener su código ADENTRO de la prisión: lo
+    lee el que encierran, al salir de su celda, y abre desde adentro.
+
+    Devuelve, por puerta, ("codigo", [índices en notas_puerta[i]]),
+    ("adentro", [índices en notas_puerta[i]]) (solo se leen desde `adentro`),
+    ("normal", [índices en notas_normales]) o None (no hay cómo leerlo)."""
+    resultado = [None] * len(puertas)
+    abiertas = set()
+    for normales_tambien in (False, True):
+        cambio = True
+        while cambio:
+            cambio = False
+            for i in range(len(puertas)):
+                if resultado[i] is not None:
+                    continue
+                cerradas = [p for j, p in enumerate(puertas) if j not in abiertas] + list(tapan)
+                if notas_puerta[i]:
+                    alcanzables = notas_antes_de_la_puerta(mundo, desde, notas_puerta[i], cerradas)
+                    if alcanzables:
+                        resultado[i] = ("codigo", alcanzables)
+                    else:
+                        for punto in adentro:
+                            alcanzables = notas_antes_de_la_puerta(mundo, punto, notas_puerta[i], cerradas)
+                            if alcanzables:
+                                resultado[i] = ("adentro", alcanzables)
+                                break
+                if resultado[i] is None and (normales_tambien or not notas_puerta[i]) and notas_normales:
+                    alcanzables = notas_antes_de_la_puerta(mundo, desde, notas_normales, cerradas)
+                    if alcanzables:
+                        resultado[i] = ("normal", alcanzables)
+                if resultado[i] is not None:
+                    abiertas.add(i)
+                    cambio = True
+    return resultado
+
+
 def _rect(centro, tamano):
     rect = pygame.Rect(0, 0, *tamano)
     rect.center = (int(centro[0]), int(centro[1]))
@@ -120,29 +184,50 @@ class Mision:
         roles = {j.rol for j in juego.jugadores}
         self.falta_tecnomante = "Tecnomante" not in roles
         self.falta_forjador = "Forjador" not in roles
+        # Sin Biomante, abono para la planta de la Biosfera (misiones/guardia.py).
+        self.hay_planta = bool(objetos.get("planta") and objetos.get("guardia"))
+        self.falta_biomante = "Biomante" not in roles and self.hay_planta
+        # Sin Forjador las piezas no son solo suyas: las ve y las recoge quien
+        # lleve el kit de herramientas (ve_piezas). El nombre es de antes,
+        # cuando las veía cualquiera.
         self.piezas_para_todos = self.activa and self.falta_forjador
         self.resultado = None            # "victoria" / "derrota"
-        self.motivo = None               # "nexus" si perdieron porque los aliens tomaron NEXUS
 
-        self.puerta = None
-        self.puerta_abierta = True
+        # Puertas con código: {"rect", "codigo", "abierta", "nombre", "color",
+        # "candidatas"}. La primera es la de la prisión (fase 1).
+        self.puertas = []
+        self._codigo_suelto = self._codigo_nuevo()
         self.capsula = None
         self.consolas, self.celdas, self.notas, self.consumibles = [], [], [], []
-        self.codigo = "-".join(str(self.rng.randint(1, 9)) for _ in range(3))
         self.piezas_entregadas = 0
         self.codigos_fallidos = 0        # para el logro "A la primera"
         self.abrio = None                # quién abrió la puerta de la prisión
+        self._objetivos = []             # rects de lo de la misión (para ver qué tapan las puertas)
+        self._tapado = False             # ¿alguna puerta cerrada tapa algo de la misión?
         self.reparacion = 0.0
         self.fase = None
         if not self.activa:
             return
 
-        puerta = objetos.get("puerta")
-        if puerta:
-            self.puerta = _rect(px((puerta["rx"], puerta["ry"])),
-                                (max(8, int(puerta["ancho"] * ancho)), max(8, int(puerta["alto"] * alto))))
-            self.puerta_abierta = False
-            mundo.paredes.append(self.puerta)
+        # Desde dónde se mide qué se alcanza (dónde empiezan los jugadores).
+        self._desde = juego.jugadores[0].hitbox.topleft if juego.jugadores else None
+        usados = set()
+        # Las notas "solo Difícil" salen donde nadie se escapa solo de la celda
+        # (Difícil e Inteligente; también sin dificultad, en las pruebas).
+        dif = getattr(juego, "dificultad", None)
+        con_dificil = dif is None or getattr(dif, "clave", None) in ("dificil", "inteligente")
+        for i, puerta in enumerate(objetos.get("puertas_codigo") or []):
+            nombre, color = color_puerta(i)
+            codigo = self._codigo_nuevo(evitar=usados)
+            usados.add(codigo)
+            self.puertas.append({
+                "rect": _rect(px((puerta["rx"], puerta["ry"])),
+                              (max(8, int(puerta["ancho"] * ancho)), max(8, int(puerta["alto"] * alto)))),
+                "codigo": codigo, "abierta": False, "nombre": nombre, "color": color,
+                "candidatas": [],
+                "notas_mapa": [px(n) for n in (puerta.get("notas") or [])
+                               + ((puerta.get("notas_dificil") or []) if con_dificil else [])],
+            })
 
         self.capsula = _rect(px(objetos["capsula"]), TAMANO_CAPSULA)
         self.consolas = [{"rect": _rect(px(c), TAMANO_CONSOLA), "progreso": 0.0}
@@ -151,8 +236,14 @@ class Mision:
         # Las puertas para dos también tapan al buscar dónde esconder el código.
         self._dobles = [_rect(px((d["rx"], d["ry"])), (max(8, int(d["ancho"] * ancho)), max(8, int(d["alto"] * alto))))
                         for d in objetos.get("puertas_dobles", [])]
-        self._crear_notas([px(n) for n in objetos.get("notas", [])])
+        self._crear_notas([px(n) for n in objetos.get("notas", [])],
+                          [p["notas_mapa"] for p in self.puertas])
         self._crear_consumibles([px(c) for c in objetos.get("consumibles", [])])
+        # Lo que no puede quedar detrás de una puerta cerrada sin que la flecha
+        # lleve a abrirla.
+        self._objetivos = ([k["rect"] for k in self.consolas] + [self.capsula]
+                           + [_rect(px(p), (34, 34)) for p in objetos.get("piezas", [])])
+        self._recalcular_acceso()
 
         if self.puerta is not None:
             self.fase = "prision"
@@ -163,52 +254,170 @@ class Mision:
 
     # -- Preparación ----------------------------------------------------------------
 
-    def _crear_notas(self, puntos):
-        """Reparte los textos y esconde el código en una nota alcanzable."""
-        self.notas = [{"rect": _rect(p, TAMANO_NOTA), "titulo": "", "texto": "", "leida_por": set()}
-                      for p in puntos]
-        alcanzables = list(range(len(self.notas)))
-        if self.juego.jugadores and self.puerta is not None:
-            desde = self.juego.jugadores[0].hitbox.topleft
-            alcanzables = notas_antes_de_la_puerta(self.juego.mundo, desde,
-                                                   [n["rect"] for n in self.notas],
-                                                   [self.puerta] + getattr(self, "_dobles", []))
-            if not alcanzables:
-                # Antes le ponía el código a cualquier nota, aunque estuviera del
-                # otro lado: la partida quedaba imposible. Mejor sin puerta.
-                print("[AVISO] Ninguna nota se alcanza antes de la puerta con código: "
-                      "se deja abierta (ponle notas antes, con el editor de mapa).")
-                if self.puerta in self.juego.mundo.paredes:
-                    self.juego.mundo.paredes.remove(self.puerta)
-                self.puerta, self.puerta_abierta = None, True
-                alcanzables = list(range(len(self.notas)))
+    # -- Puertas con código ---------------------------------------------------------
+
+    def _codigo_nuevo(self, evitar=()):
+        while True:
+            codigo = "-".join(str(self.rng.randint(1, 9)) for _ in range(3))
+            if codigo not in evitar:
+                return codigo
+
+    @property
+    def principal(self):
+        """La puerta de la prisión (fase 1): la primera, si sigue en el juego."""
+        if self.puertas and not self.puertas[0].get("quitada"):
+            return self.puertas[0]
+        return None
+
+    @property
+    def puerta(self):
+        p = self.principal
+        return p["rect"] if p is not None else None
+
+    @property
+    def puerta_abierta(self):
+        p = self.principal
+        return p is None or p["abierta"]
+
+    @property
+    def codigo(self):
+        p = self.principal
+        return p["codigo"] if p is not None else self._codigo_suelto
+
+    def _de(self, puerta):
+        """" roja", " azul"... (vacío si el mapa tiene una sola puerta)."""
+        return f" {puerta['nombre']}" if len(self.puertas) > 1 else ""
+
+    def puertas_cerradas(self):
+        return [p for p in self.puertas if not p["abierta"]]
+
+    def _crear_notas(self, puntos, notas_por_puerta=()):
+        """Las notas normales (historia) y las de código de cada puerta. El
+        código de cada puerta va en una de sus notas de código que se alcance
+        antes de abrirla (sortear_candidatas); si no tiene, en una normal. Si
+        no hay cómo leerlo, la puerta queda abierta."""
+        mundo = self.juego.mundo
+        rects_puertas = [p["rect"] for p in self.puertas]
+        # Para sortear, las puertas no pueden ser paredes del mundo.
+        mundo.paredes[:] = [r for r in mundo.paredes if r not in rects_puertas]
+        self.notas = [{"rect": _rect(p, TAMANO_NOTA), "titulo": "", "texto": "", "leida_por": set(),
+                       "de_codigo": False, "puerta": None} for p in puntos]
+        por_puerta = []
+        for i, puntos_codigo in enumerate(list(notas_por_puerta) + [[]] * (len(self.puertas) - len(notas_por_puerta))):
+            notas = [{"rect": _rect(p, TAMANO_NOTA), "titulo": "", "texto": "", "leida_por": set(),
+                      "de_codigo": True, "puerta": i} for p in puntos_codigo]
+            por_puerta.append(notas)
+            self.notas += notas
+        normales = [n for n in self.notas if not n["de_codigo"]]
+        if self.puertas:
+            desde = getattr(self, "_desde", None) or \
+                mundo.punto_libre((mundo.ancho // 2, mundo.alto // 2), 48, 19)
+            # Donde queda el que sale de una celda: si las notas de una puerta
+            # están adentro de la prisión, las lee él y abre desde adentro.
+            adentro = [mundo.punto_libre((c["punto"][0], c["punto"][1] + 90), 48, 19)
+                       for c in self.celdas]
+            sorteo = sortear_candidatas(mundo, desde, rects_puertas,
+                                        [[n["rect"] for n in notas] for notas in por_puerta],
+                                        [n["rect"] for n in normales],
+                                        getattr(self, "_dobles", []), adentro)
+        else:
+            sorteo = []
+        textos = {id(n): [] for n in self.notas}
+        usadas = set()
+        for i, puerta in enumerate(self.puertas):
+            puerta["abierta"], puerta["quitada"], puerta["candidatas"] = False, False, []
+            puerta["adentro"] = False
+            if sorteo[i] is None:
+                # Antes le ponía el código a cualquier nota, aunque estuviera
+                # del otro lado: la partida quedaba imposible. Mejor abierta.
+                print(f"[AVISO] El código de la puerta {puerta['nombre']} no se puede leer antes "
+                      "de abrirla: se deja abierta (ponle notas antes, con el editor de mapa).")
+                puerta["abierta"], puerta["quitada"] = True, True
+                continue
+            tipo, indices = sorteo[i]
+            puerta["adentro"] = tipo == "adentro"
+            puerta["candidatas"] = [(normales if tipo == "normal" else por_puerta[i])[k] for k in indices]
+            libres = [n for n in puerta["candidatas"] if id(n) not in usadas] or puerta["candidatas"]
+            elegida = self.rng.choice(libres)
+            usadas.add(id(elegida))
+            textos[id(elegida)].append(NOTA_CODIGO["texto"].replace("{codigo}", puerta["codigo"])
+                                       .replace("{puerta}", puerta["nombre"]))
+            if tipo == "normal" and por_puerta[i]:
+                print(f"[AVISO] Ninguna nota de código de la puerta {puerta['nombre']} se alcanza "
+                      "antes de abrirla: su código va en una nota normal.")
+        for puerta in self.puertas_cerradas():
+            mundo.paredes.append(puerta["rect"])
+        p = self.principal
+        self.notas_alcanzables = p["candidatas"] if p is not None else []   # para la flecha
         if not self.notas:
             return
-        # Sin puerta con código no hay código que esconder: todas son de historia.
-        con_codigo = self.rng.choice(alcanzables) if self.puerta is not None else None
-        self.notas_alcanzables = [self.notas[i] for i in alcanzables]   # para la flecha
         lore = list(NOTAS)
-        for i, nota in enumerate(self.notas):
-            if i == con_codigo:
+        vacias = 0
+        for nota in self.notas:
+            if textos[id(nota)]:
                 nota["titulo"] = NOTA_CODIGO["titulo"]
-                nota["texto"] = NOTA_CODIGO["texto"].replace("{codigo}", self.codigo)
+                nota["texto"] = " ".join(textos[id(nota)])
+            elif nota["de_codigo"] and NOTAS_CODIGO_VACIAS:
+                datos = NOTAS_CODIGO_VACIAS[vacias % len(NOTAS_CODIGO_VACIAS)]
+                vacias += 1
+                nota["titulo"], nota["texto"] = datos["titulo"], datos["texto"]
             else:
                 datos = lore.pop(0) if lore else {"titulo": "Nota", "texto": "Está en blanco."}
                 nota["titulo"], nota["texto"] = datos["titulo"], datos["texto"]
+            if nota["de_codigo"]:
+                nota["color"] = self.puertas[nota["puerta"]]["color"]
+
+    def _recalcular_acceso(self):
+        """¿Queda algo de la misión detrás de una puerta con código cerrada?"""
+        self._tapado = False
+        cerradas = [p for p in self.puertas_cerradas() if p is not self.principal]
+        desde = getattr(self, "_desde", None)
+        if not cerradas or desde is None or not self._objetivos:
+            return
+        mundo = self.juego.mundo
+        principal = self.puerta
+        quitar = principal is not None and principal in mundo.paredes
+        if quitar:       # como si la de la prisión ya estuviera abierta
+            mundo.paredes.remove(principal)
+        try:
+            alcanzados = notas_antes_de_la_puerta(mundo, desde, self._objetivos, [])
+        finally:
+            if quitar:
+                mundo.paredes.append(principal)
+        self._tapado = len(alcanzados) < len(self._objetivos)
 
     def _crear_consumibles(self, puntos):
-        """Solo para los roles que faltan: uno por cada punto, repartidos."""
+        """Solo para los roles que faltan: UNO de cada uno (decodificador sin
+        Tecnomante, kit sin Forjador, abono sin Biomante), cada uno en un
+        punto de consumibles distinto, al azar. (Ninguno se gasta salvo el
+        abono, así que con uno alcanza.)"""
         tipos = []
         if self.falta_tecnomante and self.consolas:
             tipos.append("decodificador")
         if self.falta_forjador:
             tipos.append("kit")
+        if self.falta_biomante:
+            tipos.append("abono")
         self.consumibles = []
-        if not tipos:
+        if not puntos or not tipos:
             return
-        for i, p in enumerate(puntos):
-            self.consumibles.append({"rect": _rect(p, TAMANO_CONSUMIBLE),
-                                     "tipo": tipos[i % len(tipos)], "tomado": False})
+        libres = list(puntos)
+        self.rng.shuffle(libres)
+        for k, tipo in enumerate(tipos):
+            if k < len(libres):
+                centro = libres[k]
+            else:
+                # Más consumibles que puntos: al lado de uno (sin montarse).
+                x, y = libres[k % len(libres)]
+                lx, ly = self.juego.mundo.punto_libre((x + 48 * (k // len(libres)) - TAMANO_CONSUMIBLE[0] // 2,
+                                                       y - TAMANO_CONSUMIBLE[1] // 2), *TAMANO_CONSUMIBLE)
+                centro = (lx + TAMANO_CONSUMIBLE[0] // 2, ly + TAMANO_CONSUMIBLE[1] // 2)
+            self.consumibles.append({"rect": _rect(centro, TAMANO_CONSUMIBLE), "tipo": tipo, "tomado": False})
+
+    def hay_consumible(self, tipo):
+        """¿Ya hay uno de esos en el piso o en el inventario de alguien?"""
+        return (any(c["tipo"] == tipo and not c["tomado"] for c in self.consumibles)
+                or any(tipo in getattr(j, "objetos", ()) for j in self.juego.jugadores))
 
     # -- Consultas ------------------------------------------------------------------
 
@@ -226,8 +435,20 @@ class Mision:
         return TEXTO_FASE.get(self.fase, "")
 
     def punto_objetivo(self, jugador):
-        """A dónde debería ir ahora este jugador, para la flecha de las
-        dificultades fáciles (dificultad.py). Devuelve (punto, texto) o None."""
+        """A dónde debería ir ahora este jugador, para la flecha amarilla de
+        las dificultades fáciles (dificultad.py). Devuelve (punto, texto) o None.
+
+        El orden (según la fase, el rol y lo que lleva):
+          0. Rescatar a un compañero encerrado.
+          1. Prisión: leer las notas y abrir la puerta.
+          2. Consolas: quien puede (Tecnomante o con decodificador) las
+             hackea; si hay un decodificador suelto, ir por él. Los demás
+             adelantan lo suyo: la planta (Biomante o con abono), el kit si
+             falta el Forjador; si no tienen nada, cuidan al que hackea.
+          3. Cápsula: primero quitar al Guardia para siempre (fruta, planta,
+             abono); el Resonante lo distrae cuando alguien necesita llegar a
+             la cápsula; luego piezas, kit, planos (NEXUS) y reparar.
+          4. Huida: a la cápsula (el Resonante, si hace falta, distrae)."""
         if not self.activa or jugador.preso or getattr(jugador, "eliminado", False):
             return None
         c = jugador.hitbox.center
@@ -239,32 +460,82 @@ class Mision:
         celda = cerca([cd for cd in self.celdas if cd["preso"] is not None], lambda cd: cd["punto"])
         if celda is not None and self.fase != "prision":
             return celda["punto"], "Rescata a tu compañero"
+        # El Guardia de la Bahía (misiones/guardia.py).
+        bahia = getattr(self.juego, "guardia_planta", None)
+        if bahia is not None and not bahia.activo:
+            bahia = None
+        if bahia is not None and "fruta" in jugador.objetos and self.fase != "prision":
+            return bahia.punto_objetivo(jugador)          # la fruta, ya: al Guardia
         if self.fase == "huida":
+            if bahia is not None:
+                distraer = bahia.punto_distraer(jugador)
+                if distraer is not None:
+                    return distraer
             return self.capsula.center, "¡A la cápsula!"
-        if self.fase == "prision":
-            leyo = any(jugador in n["leida_por"] and self.codigo in n["texto"] for n in self.notas)
-            if leyo or not self.notas:
-                return self.puerta.center, "Abre la puerta con el código"
-            nota = cerca([n for n in getattr(self, "notas_alcanzables", self.notas)
-                          if jugador not in n["leida_por"]],
-                         lambda n: n["rect"].center)
-            if nota is not None:
-                return nota["rect"].center, "Lee las notas: una tiene el código"
-            return self.puerta.center, "Abre la puerta"
+        if self.fase == "prision" and self.principal is not None:
+            return self._guiar_a_puerta(jugador, self.principal, cerca)
+        # Otra puerta con código tapa algo de la misión: a abrirla (la más cercana
+        # cuyo código ya se puede leer).
+        if self._tapado:
+            # (Una puerta con el código adentro de la prisión solo le sirve al
+            # que está adentro.)
+            alcanzables = [p for p in self.puertas_cerradas() if p["candidatas"]
+                           and (not p.get("adentro") or any(self._llega(jugador, n["rect"].center)
+                                                            for n in p["candidatas"]))]
+            puerta = cerca(alcanzables, lambda p: p["rect"].center)
+            if puerta is not None:
+                return self._guiar_a_puerta(jugador, puerta, cerca)
         if self.fase == "sabotaje":
-            consola = cerca([k for k in self.consolas if k["progreso"] < 1], lambda k: k["rect"].center)
+            pendientes = [k for k in self.consolas if k["progreso"] < 1]
+            consola = cerca(pendientes, lambda k: k["rect"].center)
+            puede_hackear = (jugador.rol == "Tecnomante" and not getattr(jugador, "eliminado", False)) \
+                or "decodificador" in jugador.objetos
+            if consola is not None and puede_hackear:
+                return consola["rect"].center, "Hackea esta consola"
             if consola is not None:
-                return consola["rect"].center, "Apaga esta consola"
+                decodificador = cerca([k for k in self.consumibles
+                                       if k["tipo"] == "decodificador" and not k["tomado"]],
+                                      lambda k: k["rect"].center)
+                if decodificador is not None:
+                    return decodificador["rect"].center, "Toma el decodificador: con él hackeas consolas"
+            # Lo que este jugador puede ir adelantando mientras otros hackean.
+            if bahia is not None:
+                planta = bahia.punto_objetivo(jugador)
+                if planta is not None:
+                    return planta
+            kit = self.kit_libre() if self.piezas_para_todos else None
+            if kit is not None:
+                return kit["rect"].center, "Toma el kit: con él verás las piezas"
+            if consola is not None:
+                return consola["rect"].center, "Cuida a quien hackea esta consola"
         red = getattr(self.juego, "nexus", None)
         if self.fase == "capsula":
+            if bahia is not None:
+                # Primero, quitar al Guardia para siempre.
+                planta = bahia.punto_objetivo(jugador)
+                if planta is not None:
+                    return planta
+                # El Resonante lo distrae cuando alguien tiene que llegar a la
+                # cápsula (con una pieza o para repararla), o si ya no hay
+                # forma de darle de comer.
+                listos = self.piezas_entregadas >= PIEZAS_NECESARIAS and self.hay_planos()
+                con_pieza = any(getattr(j, "piezas", 0) > 0 for j in self.juego.jugadores)
+                if listos or con_pieza or not bahia.hay_camino_permanente():
+                    distraer = bahia.punto_distraer(jugador)
+                    if distraer is not None:
+                        return distraer
             if getattr(jugador, "piezas", 0) > 0 and self.piezas_entregadas < PIEZAS_NECESARIAS:
+                if bahia is not None and not bahia.guardia.distraido:
+                    return self.capsula.center, "Lleva la pieza (ojo: el Guardia la cuida)"
                 return self.capsula.center, "Lleva la pieza a la cápsula"
-            puede_recoger = jugador.rol == "Forjador" or self.piezas_para_todos
-            if self.piezas_entregadas < PIEZAS_NECESARIAS and puede_recoger:
+            if self.piezas_entregadas < PIEZAS_NECESARIAS and self.ve_piezas(jugador):
                 pieza = cerca([p for p in getattr(self.juego, "piezas", []) if not p["recogida"]],
                               lambda p: p["rect"].center)
                 if pieza is not None:
                     return pieza["rect"].center, "Recoge esta pieza"
+            kit = self.kit_libre() if self.piezas_para_todos else None
+            if self.piezas_entregadas < PIEZAS_NECESARIAS and kit is not None:
+                return kit["rect"].center, "Toma el kit: con él ves las piezas"
             if not self.hay_planos() and red is not None:
                 nodo = red.nodo_de(jugador)
                 rumor = cerca([p for p in red.rumores_activos()
@@ -279,10 +550,56 @@ class Mision:
                 if terminal is not None:
                     return terminal["rect"].center, "Faltan los planos: revisa NEXUS aquí"
             if self.piezas_entregadas >= PIEZAS_NECESARIAS and self.hay_planos():
+                if bahia is not None and not bahia.guardia.distraido:
+                    return self.capsula.center, "Repara la cápsula (ojo: el Guardia)"
                 return self.capsula.center, "Repara la cápsula"
             if self.piezas_entregadas < PIEZAS_NECESARIAS:
                 return self.capsula.center, "Ayuda con la cápsula"
         return None
+
+    def _llega(self, jugador, punto):
+        """¿Puede ir caminando hasta `punto` con lo que está cerrado ahora?"""
+        mundo = self.juego.mundo
+        if not hasattr(mundo, "paredes_base"):
+            return True
+        from juego import navegacion
+        nav = navegacion.de_mundo(mundo, 34, 20)
+        extra = [p for p in mundo.paredes if p not in mundo.paredes_base]
+        return nav.conectados(jugador.hitbox.center, punto, extra=extra)
+
+    def _guiar_a_puerta(self, jugador, puerta, cerca):
+        leyo = any(jugador in n["leida_por"] and puerta["codigo"] in n["texto"] for n in self.notas)
+        if leyo or not puerta["candidatas"]:
+            return puerta["rect"].center, f"Abre la puerta{self._de(puerta)} con el código"
+        nota = cerca([n for n in puerta["candidatas"] if jugador not in n["leida_por"]],
+                     lambda n: n["rect"].center)
+        if nota is None:
+            return puerta["rect"].center, f"Abre la puerta{self._de(puerta)}"
+        if nota["de_codigo"]:
+            return nota["rect"].center, f"Lee las notas de tachuela {puerta['nombre']}: una tiene el código"
+        return nota["rect"].center, f"Lee las notas: una tiene el código de la puerta{self._de(puerta)}"
+
+    def ve_piezas(self, jugador):
+        """Quién ve y recoge las piezas sueltas: el Forjador (Ingenio mecánico)
+        y, si no hay Forjador (o lo eliminaron), quien lleve el kit de
+        herramientas."""
+        arbol = getattr(jugador, "arbol", None)
+        if arbol is not None and arbol.tiene("INGENIO") and not getattr(jugador, "eliminado", False):
+            return True
+        if not self.piezas_para_todos:
+            return False
+        if "kit" in getattr(jugador, "objetos", ()):
+            return True
+        # Si en el mapa no hay ningún kit (ni lo lleva nadie), como antes: todos.
+        hay_kit = (any(c["tipo"] == "kit" and not c["tomado"] for c in self.consumibles)
+                   or any("kit" in getattr(j, "objetos", ()) for j in self.juego.jugadores))
+        return not hay_kit
+
+    def kit_libre(self):
+        """El kit de herramientas que está en el piso, si nadie lo lleva."""
+        if any("kit" in getattr(j, "objetos", ()) for j in self.juego.jugadores):
+            return None
+        return next((c for c in self.consumibles if c["tipo"] == "kit" and not c["tomado"]), None)
 
     def hay_planos(self):
         """Los planos de la cápsula se ganan en NEXUS. Sin NEXUS no hacen falta."""
@@ -317,12 +634,13 @@ class Mision:
         for celda in self.celdas:
             if celda["preso"] is not None and math.dist(c, celda["punto"]) <= RADIO_RESCATE:
                 return f"Liberar a {celda['preso'].rol}"
-        if self.fase == "prision" and self.puerta and self._cerca(jugador, self.puerta, 70):
+        puerta = self._puerta_cerca(jugador)
+        if puerta is not None:
             if getattr(self.juego, "en_tutorial", False):
                 return "Teclado bloqueado hasta que todos terminen el tutorial"
             if getattr(self.juego, "sin_luz", False):
                 return "Teclado sin energía"
-            return "Teclado de la puerta"
+            return f"Teclado de la puerta{self._de(puerta)}"
         for cons in self.consumibles:
             if not cons["tomado"] and self._cerca(jugador, cons["rect"], 15):
                 return f"Recoger {NOMBRE_CONSUMIBLE[cons['tipo']].lower()}"
@@ -356,7 +674,8 @@ class Mision:
             if celda["preso"] is not None and math.dist(c, celda["punto"]) <= RADIO_RESCATE:
                 self.liberar(celda, jugador)
                 return True
-        if self.fase == "prision" and self.puerta and self._cerca(jugador, self.puerta, 70):
+        puerta = self._puerta_cerca(jugador)
+        if puerta is not None:
             if getattr(self.juego, "en_tutorial", False):
                 # Con los aliens dormidos sería gratis: primero todos terminan el tutorial.
                 jugador.avisar("El teclado no responde: terminen todos el tutorial.", COLOR_MAL)
@@ -364,7 +683,7 @@ class Mision:
             if getattr(self.juego, "sin_luz", False):
                 jugador.avisar("El teclado está apagado. Sin energía: enciendan la caja de fusibles.", COLOR_MAL)
                 return True
-            self._panel_codigo(jugador)
+            self._panel_codigo(jugador, self.puertas.index(puerta))
             return True
         for cons in self.consumibles:
             if not cons["tomado"] and self._cerca(jugador, cons["rect"], 15):
@@ -384,7 +703,8 @@ class Mision:
                 jugador.avisar(f"Piezas en la cápsula: {self.piezas_entregadas}/{PIEZAS_NECESARIAS}",
                                COLOR_BIEN)
             elif faltan > 0:
-                quien = "Recójanlas" if self.piezas_para_todos else "El Forjador tiene que recogerlas"
+                quien = ("Las ve y las recoge quien lleve el kit de herramientas"
+                         if self.piezas_para_todos else "El Forjador tiene que recogerlas")
                 jugador.avisar(f"Faltan {faltan} pieza(s). {quien}.", COLOR_MAL)
             elif not self.hay_planos():
                 jugador.avisar("Sin los planos no saben cómo repararla. Ganen la confianza "
@@ -408,14 +728,20 @@ class Mision:
                     return True
         return False
 
-    def _panel_codigo(self, jugador):
-        opciones = {self.codigo}
+    def _puerta_cerca(self, jugador):
+        """La puerta con código cerrada junto a la que está (la más cercana)."""
+        cerca = [p for p in self.puertas_cerradas() if self._cerca(jugador, p["rect"], 70)]
+        return min(cerca, key=lambda p: math.dist(p["rect"].center, jugador.hitbox.center), default=None)
+
+    def _panel_codigo(self, jugador, i=0):
+        puerta = self.puertas[i]
+        opciones = {puerta["codigo"]}
         while len(opciones) < 4:
-            opciones.add("-".join(str(self.rng.randint(1, 9)) for _ in range(3)))
+            opciones.add(self._codigo_nuevo())
         opciones = sorted(opciones)
         jugador.abrir_panel({
-            "tipo": "opciones", "accion": "codigo", "codigos": opciones,
-            "titulo": "Puerta con código",
+            "tipo": "opciones", "accion": "codigo", "codigos": opciones, "puerta": i,
+            "titulo": f"Puerta {puerta['nombre']}" if len(self.puertas) > 1 else "Puerta con código",
             "cuerpo": ["Un teclado pide un código de tres números.",
                        "Si te equivocas, suena la alarma."],
             "opciones": [{"texto": c} for c in opciones],
@@ -425,30 +751,42 @@ class Mision:
 
     def resolver_codigo(self, jugador, indice):
         codigos = jugador.panel.get("codigos", [])
+        i = jugador.panel.get("puerta", 0)
         jugador.cerrar_panel()
-        if indice >= len(codigos):
+        if indice >= len(codigos) or i >= len(self.puertas):
             return
-        if codigos[indice] == self.codigo:
-            self.abrir_puerta(jugador)
+        puerta = self.puertas[i]
+        if codigos[indice] == puerta["codigo"]:
+            self.abrir_puerta(jugador, i)
         else:
             self.codigos_fallidos += 1
             for alien in self.juego.aliens:
-                alien.oir(self.puerta.center)
+                alien.oir(puerta["rect"].center)
             jugador.avisar("¡Código equivocado! Suena la alarma.", COLOR_MAL)
             self._sonar("alarma", 0.8)
             self._decir("codigo_malo", jugador.rol, True)
 
-    def abrir_puerta(self, jugador=None):
-        if self.puerta is not None:
-            # Todas las copias: si una ronda anterior dejó la suya, también.
-            paredes = self.juego.mundo.paredes
-            paredes[:] = [p for p in paredes if p != self.puerta]
-        self.puerta_abierta = True
-        self.abrio = jugador
-        if jugador is not None:
+    def abrir_puerta(self, jugador=None, i=0):
+        """Abre la puerta con código i (0: la de la prisión, que pasa de fase)."""
+        if not self.puertas:
+            if self.fase == "prision":
+                self.fase = "sabotaje" if self.consolas else "capsula"
+            return
+        puerta = self.puertas[i]
+        # Todas las copias: si una ronda anterior dejó la suya, también.
+        paredes = self.juego.mundo.paredes
+        paredes[:] = [p for p in paredes if p != puerta["rect"]]
+        ya_estaba = puerta["abierta"]
+        puerta["abierta"] = True
+        if jugador is not None and not ya_estaba:
             jugador.sumar_puntos(PUNTOS_PUERTA)
-        self.fase = "sabotaje" if self.consolas else "capsula"
-        self._avisar_todos("¡La puerta se abrió!", COLOR_BIEN)
+        if puerta is self.principal or i == 0:
+            self.abrio = jugador
+            if self.fase == "prision":
+                self.fase = "sabotaje" if self.consolas else "capsula"
+        self._recalcular_acceso()
+        self._avisar_todos(f"¡La puerta {puerta['nombre']} se abrió!" if len(self.puertas) > 1
+                           else "¡La puerta se abrió!", COLOR_BIEN)
         self._sonar("puerta")
         self._decir("puerta_abierta", None, True)
 
@@ -574,23 +912,32 @@ class Mision:
         """Lo eliminaron (sin vidas): suelta lo que llevaba donde lo atraparon.
 
         Sin esto, perder al Tecnomante o al Forjador dejaba la misión sin
-        forma de terminarse. El Tecnomante deja dos decodificadores (para las
-        consolas) y el Forjador un kit de herramientas (para la cápsula); desde
-        ese momento cualquiera puede recoger piezas. Además cae lo que tuviera
+        forma de terminarse. El Tecnomante deja un decodificador (para las
+        consolas) y el Forjador un kit de herramientas (para la cápsula), si no
+        hay ya uno en el mapa o en el inventario de alguien; desde
+        ese momento quien lo recoja ve y recoge las piezas. Además cae lo que tuviera
         en el inventario: consumibles y piezas.
         """
         if not self.activa:
             return []
-        tipos = []
+        tipos = sorted(t for t in jugador.objetos.elements() if t in NOMBRE_CONSUMIBLE)
+        jugador.objetos.clear()
+        # Lo de su rol, uno solo (y si ya hay uno por ahí, nada).
         if jugador.rol == "Tecnomante":
-            tipos += ["decodificador", "decodificador"]
             self.falta_tecnomante = True
+            if self.consolas and not self.hay_consumible("decodificador") and "decodificador" not in tipos:
+                tipos.insert(0, "decodificador")
         if jugador.rol == "Forjador":
-            tipos.append("kit")
             self.falta_forjador = True
             self.piezas_para_todos = True
-        tipos += sorted(t for t in jugador.objetos.elements() if t in NOMBRE_CONSUMIBLE)
-        jugador.objetos.clear()
+            if not self.hay_consumible("kit") and "kit" not in tipos:
+                tipos.insert(0, "kit")
+        bahia = getattr(self.juego, "guardia_planta", None)
+        if (jugador.rol == "Biomante" and bahia is not None and bahia.activo
+                and bahia.planta is not None and not bahia.planta["crecida"]):
+            self.falta_biomante = True
+            if not self.hay_consumible("abono") and "abono" not in tipos:
+                tipos.insert(0, "abono")
         piezas, jugador.piezas = jugador.piezas, 0
 
         mundo = self.juego.mundo
@@ -612,6 +959,7 @@ class Mision:
         if soltados:
             nombres = {"decodificador": ("decodificador", "decodificadores"),
                        "kit": ("kit de herramientas", "kits de herramientas"),
+                       "fruta": ("fruta", "frutas"), "abono": ("abono", "abonos"),
                        "pieza": ("pieza", "piezas")}
             cuenta = {}
             for s in soltados:
@@ -640,11 +988,6 @@ class Mision:
 
     def actualizar(self, dt):
         if not self.activa or self.resultado is not None:
-            return
-        red = getattr(self.juego, "nexus", None)
-        if red is not None and red.derrota:
-            # Ganó el rojo: los aliens tomaron NEXUS. (Aquí irá la cinemática.)
-            self.resultado, self.motivo = "derrota", "nexus"
             return
         # Los puestos sin mando todavía no se mueven: no cuentan para ganar ni
         # para perder, o con 3 o 4 jugadores nunca se podría escapar.

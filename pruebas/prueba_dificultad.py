@@ -32,26 +32,37 @@ pygame.key.get_pressed = lambda: Teclas()
 
 # ================= Los números =================
 claves = [d["clave"] for d in DIFICULTADES]
-assert claves == ["tutorial", "facil", "normal", "dificil", "inteligente"]
-for nombre, (facil, normal, dificil) in AJUSTES.items():
-    assert facil != dificil, nombre
-    # Ir de Fácil a Difícil siempre aprieta en la misma dirección.
-    assert (facil <= normal <= dificil) or (facil >= normal >= dificil), nombre
-d = Dificultad("dificil")
-assert d.valor("vel_aliens") == 1.0 and d.valor("cf_espera_ms") == ESPERA_INICIAL_MS
-assert d.vidas == 3 and not d.flecha, "Difícil = como era el juego"
-t = Dificultad("tutorial")
-assert t.vidas_infinitas and t.flecha and t.valor("vel_aliens") < Dificultad("facil").valor("vel_aliens")
+assert claves == ["facil", "normal", "dificil", "inteligente"]
+for nombre, valores in AJUSTES.items():
+    assert len(valores) == 4, nombre        # Fácil, Normal, Difícil, Pesadilla
+    assert valores[0] != valores[3], nombre
+    # Subir de nivel siempre aprieta en la misma dirección.
+    assert valores == sorted(valores) or valores == sorted(valores, reverse=True), nombre
+f, n, d = Dificultad("facil"), Dificultad("normal"), Dificultad("dificil")
+# Cada una quedó un escalón más fácil: Difícil es el viejo Normal, Normal el
+# viejo Fácil y Fácil el viejo Tutorial.
+assert d.valor("vel_aliens") == 0.92 and d.vidas == 4 and not d.flecha and d.fuga_ms is None
+assert f.flecha and n.flecha
+assert n.valor("vel_aliens") == 0.82 and n.vidas == 5 and n.fuga_ms == 20000
+assert f.valor("vel_aliens") == 0.70 and f.vidas_infinitas and f.fuga_ms == 8000
+assert not n.vidas_infinitas and not d.vidas_infinitas
+assert all(Dificultad(c).presenta_aliens for c in claves)
+assert f.valor("vel_aliens") < n.valor("vel_aliens") < d.valor("vel_aliens") < 1.0
+assert all(Dificultad(c).valor("sombra_hasta_luz") < 0.5 for c in ("facil", "normal", "dificil"))
 i = Dificultad("inteligente")
-i.nivel = 3.0
-assert i.valor("vel_aliens") > 1.0 and i.valor("cf_espera_ms") < ESPERA_INICIAL_MS
-assert i.nombre_nivel() == "Pesadilla" and not i.flecha
-i.nivel = 0.5
+assert i.nivel == 1.0 and i.valor("vel_aliens") == n.valor("vel_aliens"), "Inteligente empieza en Normal"
+i.nivel = 3.0       # lo más alto: los números base (el viejo Difícil)
+assert i.valor("vel_aliens") == 1.0 and i.valor("cf_espera_ms") == ESPERA_INICIAL_MS
+assert i.nombre_nivel() == "Pesadilla" and not i.flecha and i.fuga_ms is None
+assert i.valor("sombra_hasta_luz") >= 0.5
+i.nivel = 2.0
+assert not i.flecha and i.fuga_ms is None and i.nombre_nivel() == "Difícil"
+i.nivel = 1.2
 assert i.flecha
 print("niveles:", ", ".join(f"{d['nombre']}" for d in DIFICULTADES))
 
 
-# Sin dificultad (las pruebas que arman el juego a mano) = como Difícil.
+# Sin dificultad (las pruebas que arman el juego a mano) = los números base.
 class SinNada:
     pass
 
@@ -93,14 +104,14 @@ g._manejar_click(g.rects_opciones[1].center)        # 3 jugadores
 avanzar(g)
 assert g.current_screen == "dificultad" and g.cantidad_jugadores == 3
 g._dibujar()
-g._manejar_click(g.rects_opciones[1].center)        # Fácil
+g._manejar_click(g.rects_opciones[0].center)        # Fácil
 avanzar(g)
 assert g.current_screen == "roles" and g.dificultad.clave == "facil"
 print("con el mouse: 3 jugadores, Fácil")
 
 
 # ================= En la partida =================
-def partida(clave):
+def partida(clave, saltar=True):
     g = App.Game()
     g._activar_opcion_menu("jugar"); avanzar(g)
     g._manejar_tecla(pygame.K_RETURN); avanzar(g)
@@ -108,8 +119,21 @@ def partida(clave):
     g._manejar_tecla(pygame.K_RETURN); avanzar(g)
     g._manejar_tecla(pygame.K_e); g._manejar_tecla(pygame.K_RETURN)
     avanzar(g); g.current_screen = "partida"
-    g.tutorial.activo = False; g._terminar_tutorial()
+    if saltar:
+        g.saltar_tutorial()
+        assert g.presentacion is not None, "la ventana de alien nuevo sale en todas"
+        g.presentacion = None   # la ventana de alien nuevo pausaría la prueba
     return g
+
+
+# Los pasos del principio salen en todas las dificultades.
+for clave in claves:
+    g = partida(clave, saltar=False)
+    assert g.en_tutorial and all(a.aturdido for a in g.aliens), clave
+    g.saltar_tutorial()
+    g._actualizar_partida(DT)
+    assert not g.en_tutorial and g.logros.tiene("despertar"), clave
+print("los pasos del tutorial salen en todas las dificultades")
 
 
 resumen = {}
@@ -130,15 +154,15 @@ for clave in claves:
                       round(d.valor("vel_aliens"), 2))
 print("vidas, planos, velocidad de aliens:", resumen)
 
-# Tutorial: que te atrapen no quita vidas.
-g = partida("tutorial")
+# Fácil: que te atrapen no quita vidas.
+g = partida("facil")
 j = g.jugadores[0]
 g._atrapar(j, g.aliens[0])
 assert j.vidas == j.vidas_max and j.veces_atrapado == 1
-print("tutorial: atrapado sin perder vida")
+print("fácil: atrapado sin perder vida")
 
-# Fuga: en Fácil el encerrado sale solo; que estén todos presos no es derrota.
-g = partida("facil")
+# Fuga: en Normal el encerrado sale solo; que estén todos presos no es derrota.
+g = partida("normal")
 g.mision.abrir_puerta()
 for j in g.jugadores:
     j.invulnerable_ms = 0
@@ -150,9 +174,10 @@ assert "reja" in (g.jugadores[0].pista_mision or "")
 for _ in range(int(21000 / DT)):
     g._actualizar_partida(DT)
 assert not any(j.preso for j in g.jugadores), "se fugaron a los 20 s"
-print("fácil: los encerrados se fugan solos a los 20 s")
-# En Difícil, todos presos = derrota (como era).
-g = partida("dificil")
+print("normal: los encerrados se fugan solos a los 20 s")
+# En Pesadilla (solo Inteligente, nadie se fuga solo), todos presos = derrota.
+g = partida("inteligente")
+g.dificultad.nivel = 3.0
 g.mision.abrir_puerta()
 for j in g.jugadores:
     j.invulnerable_ms = 0
@@ -160,8 +185,19 @@ for j in g.jugadores:
 g._actualizar_partida(DT)
 assert g.mision.resultado == "derrota"
 
-# Normal: 4 vidas y se pierden.
-g = partida("normal")
+# Difícil: nadie sale solo de la celda (solo si lo liberan): todos presos = derrota.
+g = partida("dificil")
+g.mision.abrir_puerta()
+for j in g.jugadores:
+    j.invulnerable_ms = 0
+    g._atrapar(j, g.aliens[0])
+assert all(j.preso and j.preso.get("fuga_ms") is None for j in g.jugadores)
+g._actualizar_partida(DT)
+assert g.mision.resultado == "derrota"
+print("difícil: sin fuga; solo sales si te liberan")
+
+# Difícil: 4 vidas y se pierden.
+g = partida("dificil")
 j = g.jugadores[0]
 g._atrapar(j, g.aliens[0])
 assert j.vidas == 3

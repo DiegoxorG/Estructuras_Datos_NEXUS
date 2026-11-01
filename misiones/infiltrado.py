@@ -166,7 +166,7 @@ class CasoInfiltrado:
         subir pruebas, acusar) o, si ya se cerró, cómo terminó."""
         pie_salir = f"[{jugador.nombre_tecla('interactuar')}] salir"
         if not self.pruebas:
-            return {"tipo": "aviso", "titulo": "NEXUS",
+            return {"tipo": "aviso", "titulo": "NEXUS", "nexus_terminal": True,
                     "cuerpo": ["La red está tranquila. Demasiado tranquila."], "pie": pie_salir}
         if not self.activo:
             nombre = self.infiltrado["nombre"]
@@ -175,7 +175,7 @@ class CasoInfiltrado:
                       [f"Acusaron a {self.acusado['nombre']}, que era inocente.",
                        "El Cambiaformas borró su rastro. Ya no se puede hacer nada."])
             return {"tipo": "aviso", "titulo": "NEXUS · El Cambiaformas", "cuerpo": cuerpo,
-                    "pie": pie_salir}
+                    "pie": pie_salir, "nexus_terminal": True}
         mias = self.pruebas_de(jugador)
         opciones = []
         if mias:
@@ -189,7 +189,7 @@ class CasoInfiltrado:
                   f"Pruebas subidas: {len(self.subidas)}/{len(PRUEBAS)}", "",
                   "Sospechosos:"] + self.lineas_sospechosos()
         return {
-            "tipo": "opciones", "accion": "infiltrado_menu", "zona": zona,
+            "tipo": "opciones", "accion": "infiltrado_menu", "zona": zona, "nexus_terminal": True,
             "titulo": "NEXUS · El Cambiaformas",
             "cuerpo": cuerpo,
             "opciones": [{"texto": t} for t, _ in opciones],
@@ -201,7 +201,7 @@ class CasoInfiltrado:
     def panel_acusar(self, jugador):
         restantes = self.restantes()
         return {
-            "tipo": "opciones", "accion": "infiltrado_acusar",
+            "tipo": "opciones", "accion": "infiltrado_acusar", "nexus_terminal": True,
             "titulo": "¿Quién es el Cambiaformas?",
             "cuerpo": ["Si aciertas, queda expuesto. Si te equivocas, el caso se cierra "
                        "y la nave avisa a los aliens dónde estás."],

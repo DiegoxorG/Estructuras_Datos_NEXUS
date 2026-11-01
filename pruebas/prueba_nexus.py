@@ -17,7 +17,7 @@ from juego import app as App
 from juego import objetos_mapa
 from Estructuras.grafo import Grafo
 from redes.nexus import VERDE, ROJO, GRIS
-from data.nexus import UMBRAL_PLANOS, UMBRAL_DERROTA_ROJO, TICK_PROPAGACION_MS, CUENTAS
+from data.nexus import UMBRAL_PLANOS, TICK_PROPAGACION_MS, CUENTAS
 objetos_mapa.mapa_activo = lambda: "Nave"
 DT = 1000 // 60
 
@@ -58,7 +58,7 @@ def nueva_partida():
     juego._manejar_tecla(pygame.K_RETURN); avanzar(); juego.current_screen = "roles"
     juego._manejar_tecla(pygame.K_e); juego._manejar_tecla(pygame.K_RETURN)
     avanzar(); juego.current_screen = "partida"
-    juego.tutorial.activo = False; juego._terminar_tutorial()
+    juego.saltar_tutorial()
     juego.mision.abrir_puerta()
     juego.quitar_cambiaformas()      # aquí solo NEXUS; el Cambiaformas en su prueba
     for a in juego.aliens:
@@ -252,13 +252,13 @@ r = red.resumen()
 assert r["desmentidos"] == 2 and r["compartidos_falsos"] == 1 and r["bots_reportados"] == 1
 print("resultados:", r["consejo"])
 
-# Si gana el rojo: los aliens toman NEXUS y se pierde.
+# Aunque gane el rojo (todos les creen a los aliens), no se pierde por eso.
 juego2 = nueva_partida()
 for n in juego2.nexus._presos():
     juego2.nexus.grafo.datos[n]["color"] = ROJO
 frames(juego2, 2)
-assert juego2.nexus.derrota and juego2.mision.motivo == "nexus"
-print(f"rojo >= {UMBRAL_DERROTA_ROJO:.0%}: los aliens tomaron NEXUS (derrota)")
+assert juego2.nexus.barras()[1] >= 0.99 and juego2.mision.resultado is None
+print("rojo al 100%: no se pierde (solo los aliens más rápidos)")
 
 # El mando abre el celular con RB.
 juego3 = nueva_partida()

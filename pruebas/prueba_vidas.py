@@ -42,7 +42,7 @@ def nueva_partida(roles):
     g.seleccion_roles[0]["cursor"] = nombres.index(roles[0]); g._manejar_tecla(pygame.K_e)
     g.seleccion_roles[1]["cursor"] = nombres.index(roles[1]); g._manejar_tecla(pygame.K_RETURN)
     avanzar(); g.current_screen = "partida"
-    g.tutorial.activo = False; g._terminar_tutorial()
+    g.saltar_tutorial()
     for a in g.aliens:
         a.descanso_ms = 10 ** 9
     return g
@@ -126,8 +126,8 @@ for _ in range(3):
     g3._atrapar(tec3, g3.aliens[0])
 assert tec3.eliminado
 decos = [c for c in g3.mision.consumibles if c["tipo"] == "decodificador" and not c["tomado"]]
-assert len(decos) >= 2 and all(math.dist(c["rect"].center, donde) < 120 for c in decos[-2:])
-print("Tecnomante eliminado: dejó 2 decodificadores donde lo atraparon")
+assert len(decos) == 1 and math.dist(decos[0]["rect"].center, donde) < 120
+print("Tecnomante eliminado: dejó un decodificador (uno solo) donde lo atraparon")
 
 g4 = nueva_partida(("Forjador", "Resonante"))
 forj4, res4 = g4.jugadores

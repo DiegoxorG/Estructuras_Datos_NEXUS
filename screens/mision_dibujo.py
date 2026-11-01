@@ -10,6 +10,7 @@ import math
 import pygame
 
 from juego.fuentes import fuente, fuente_de_tamano
+from screens.flechas import flecha_alrededor, cerca_del_borde
 
 
 COLOR_SOMBRA = (12, 11, 23)
@@ -19,7 +20,8 @@ COLOR_CONSOLA = (180, 110, 255)
 COLOR_LISTO = (96, 210, 120)
 COLOR_CAPSULA = (90, 220, 230)
 # El kit era naranja como las piezas y se confundían: ahora es verde.
-COLOR_CONSUMIBLE = {"decodificador": (90, 160, 255), "kit": (110, 210, 140)}
+COLOR_CONSUMIBLE = {"decodificador": (90, 160, 255), "kit": (110, 210, 140),
+                    "fruta": (232, 84, 60), "abono": (176, 128, 80)}
 
 
 def _texto(screen, texto, centro_x, y, color):
@@ -68,29 +70,14 @@ def dibujar_flecha_objetivo(screen, vista, camara, dueño, mision, dificultad, r
         r.clamp_ip(vista.inflate(-8, -8))
         screen.blit(fondo, r)
         screen.blit(img, img.get_rect(center=r.center))
-        return
-    c = dueño.hitbox.center
-    dx, dy = x - c[0], y - c[1]
-    distancia = math.hypot(dx, dy) or 1
-    ux, uy = dx / distancia, dy / distancia
-    margen = 70
-    mitad_w, mitad_h = vista.width / 2 - margen, vista.height / 2 - margen
-    escala = min(mitad_w / abs(ux) if ux else 1e9, mitad_h / abs(uy) if uy else 1e9)
-    px, py = vista.centerx + ux * escala, vista.centery + uy * escala
-    angulo = math.atan2(uy, ux)
-    tam = 14
-    punta = (px + math.cos(angulo) * tam, py + math.sin(angulo) * tam)
-    izq = (px + math.cos(angulo + 2.5) * tam, py + math.sin(angulo + 2.5) * tam)
-    der = (px + math.cos(angulo - 2.5) * tam, py + math.sin(angulo - 2.5) * tam)
-    pygame.draw.polygon(screen, COLOR_FLECHA, [punta, izq, der])
-    pygame.draw.polygon(screen, COLOR_SOMBRA, [punta, izq, der], 2)
-    img = f.render(texto, True, COLOR_FLECHA)
-    fondo = pygame.Surface((img.get_width() + 10, img.get_height() + 4), pygame.SRCALPHA)
-    fondo.fill((14, 15, 28, 180))
-    r = fondo.get_rect(center=(px - ux * 34, py - uy * 26))
-    r.clamp_ip(vista.inflate(-8, -8))
-    screen.blit(fondo, r)
-    screen.blit(img, img.get_rect(center=r.center))
+        if not cerca_del_borde(vista, centro):
+            return
+    # Fuera de pantalla (o en el borde, donde lo tapa el HUD): una flecha
+    # alrededor del jugador (screens/flechas.py).
+    # Si el objetivo ya está en pantalla (en el borde), su letrero ya salió
+    # encima del aro: la flecha va sin texto para no repetirlo.
+    flecha_alrededor(screen, vista, camara, dueño, (x, y), COLOR_FLECHA,
+                     None if camara.collidepoint(x, y) else texto, tiempo_ms)
 
 
 def dibujar_piso(screen, offset, camara, dueño, mision, tiempo_ms):
@@ -98,13 +85,19 @@ def dibujar_piso(screen, offset, camara, dueño, mision, tiempo_ms):
         return
     brillo = 0.6 + 0.4 * math.sin(tiempo_ms / 280)
 
-    if mision.puerta is not None and not mision.puerta_abierta and mision.puerta.colliderect(camara):
-        r = _en_pantalla(mision.puerta, offset)
+    varias = len(getattr(mision, "puertas", ())) > 1
+    for puerta in getattr(mision, "puertas", ()):
+        if puerta["abierta"] or not puerta["rect"].colliderect(camara):
+            continue
+        r = _en_pantalla(puerta["rect"], offset)
+        color = puerta["color"] if varias else COLOR_PUERTA
         pygame.draw.rect(screen, (60, 62, 78), r)
         for i in range(r.top + 6, r.bottom, 14):
-            pygame.draw.line(screen, COLOR_PUERTA, (r.left, i), (r.right, i), 4)
-        pygame.draw.rect(screen, COLOR_PUERTA, r, 3)
-        pygame.draw.circle(screen, (255, 80, 80) if brillo > 0.8 else (140, 40, 40),
+            pygame.draw.line(screen, color, (r.left, i), (r.right, i), 4)
+        pygame.draw.rect(screen, color, r, 3)
+        # La luz del teclado, del color de la puerta (el de las tachuelas de sus notas).
+        luz = puerta["color"]
+        pygame.draw.circle(screen, luz if brillo > 0.8 else tuple(c // 2 for c in luz),
                            (r.centerx, r.top - 10), 6)
 
     if mision.capsula is not None and mision.capsula.colliderect(camara):
@@ -149,12 +142,28 @@ def dibujar_piso(screen, offset, camara, dueño, mision, tiempo_ms):
         for i in range(3):
             y = r.y + 7 + i * 7
             pygame.draw.line(screen, (120, 110, 80), (r.x + 7, y), (r.right - 7, y), 1)
+        if nota.get("de_codigo"):
+            # Las de código (vienen con una puerta): tachuela del color de su puerta.
+            color = nota.get("color", (220, 60, 60))
+            pygame.draw.circle(screen, (30, 24, 24), (r.centerx, r.y + 3), 5)
+            pygame.draw.circle(screen, color if nueva else tuple(c * 2 // 3 for c in color),
+                               (r.centerx, r.y + 2), 4)
+            pygame.draw.rect(screen, color, (r.x + 7, r.bottom - 8, r.width - 14, 3))
 
     for cons in mision.consumibles:
         if cons["tomado"] or not cons["rect"].colliderect(camara):
             continue
         r = _en_pantalla(cons["rect"], offset)
         color = COLOR_CONSUMIBLE[cons["tipo"]]
+        if cons["tipo"] in ("fruta", "abono", "kit", "decodificador"):
+            # Su dibujito (el mismo del inventario), con un halo que late.
+            from screens.paneles import _icono_objeto
+            brillo = 0.6 + 0.4 * math.sin(tiempo_ms / 260)
+            halo = pygame.Surface((r.width + 20, r.height + 20), pygame.SRCALPHA)
+            pygame.draw.ellipse(halo, (*color, int(80 * brillo)), halo.get_rect())
+            screen.blit(halo, (r.x - 10, r.y - 10))
+            _icono_objeto(screen, cons["tipo"], r.center, r.width + 6)
+            continue
         pygame.draw.rect(screen, (30, 30, 40), r, border_radius=5)
         pygame.draw.rect(screen, color, r.inflate(-10, -10), border_radius=3)
         pygame.draw.rect(screen, color, r, 2, border_radius=5)

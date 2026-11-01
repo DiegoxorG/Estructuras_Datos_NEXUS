@@ -11,8 +11,11 @@ es de ninguna tecla real. Así:
 - lo que se presiona una vez (interactuar, abrir el árbol...) llega como si
   fuera un KEYDOWN de esa tecla virtual (`Mandos.evento()` -> lista de teclas).
 
-El primer mando que se conecta es del jugador 3; el segundo, del jugador 4.
-Se pueden conectar y desconectar con el juego abierto.
+El primer mando que se conecta es el "Mando 1" (esquema 2) y el segundo el
+"Mando 2" (esquema 3). Por defecto son de los jugadores 3 y 4, pero cada
+jugador puede escoger su control en la pantalla "controles" (app.py): las
+teclas virtuales van por esquema, no por puesto. Se pueden conectar y
+desconectar con el juego abierto.
 
 En el menú, la cantidad de jugadores y los resultados, el mando hace de
 flechas, Enter y Esc, para que se pueda jugar sin tocar el teclado.
@@ -45,7 +48,7 @@ PUESTOS_CON_MANDO = (2, 3)
 # Teclas virtuales: muy por encima de cualquier código de tecla de pygame.
 BASE_VIRTUAL = 0x7F000000
 ACCIONES = ("arriba", "abajo", "izquierda", "derecha", "interactuar", "habilidad",
-            "habilidades", "sigilo", "volver", "celular")
+            "habilidades", "sigilo", "volver", "celular", "soltar")
 
 
 def tecla_virtual(puesto, accion):
@@ -62,7 +65,7 @@ def accion_de(tecla):
     return resto // 32, ACCIONES[resto % 32]
 
 
-NOMBRE_BOTON = {"interactuar": "A", "habilidad": "X", "habilidades": "Y", "celular": "RB",
+NOMBRE_BOTON = {"interactuar": "A", "habilidad": "X", "habilidades": "Y", "celular": "RB", "soltar": "B",
                 "sigilo": "LB", "arriba": "Stick", "abajo": "Stick",
                 "izquierda": "Stick", "derecha": "Stick", "volver": "B"}
 
@@ -135,7 +138,7 @@ class Mandos:
                 lt = joy.get_axis(EJE_LT) if joy.get_numaxes() > EJE_LT else -1
                 return bool(joy.get_button(BOTONES["LB"])) or lt > 0.3
             boton = {"interactuar": "A", "habilidad": "X", "habilidades": "Y",
-                     "volver": "B", "celular": "RB"}[accion]
+                     "volver": "B", "celular": "RB", "soltar": "B"}[accion]
             return bool(joy.get_button(BOTONES[boton]))
         except pygame.error:
             return False

@@ -36,7 +36,8 @@ from data.npcs import (ESTILOS, VELOCIDAD_NPC, ESPERA_NPC_MS, RADIO_CHARLA,
                        FRASES_VERDE_ALIEN, FRASES_VERDE_CAMBIAFORMAS, FRASES_VERDE_RUMOR,
                        FRASES_VERDE, FRASES_GRIS, FRASES_ROJO, RADIO_HABLAR, DISTANCIA_SEGUIR,
                        RADIO_RESCATE_CAPSULA, PUNTOS_RESCATE, FRASE_PIDE_RESCATE, FRASE_ACEPTA, FRASE_DUDA,
-                       FRASE_NIEGA, FRASE_RESCATADO, FRASES_ADVIERTE_ESCOLTA)
+                       FRASE_NIEGA, FRASE_RESCATADO, FRASES_ADVIERTE_ESCOLTA,
+                       FRASE_ESPERA, RADIO_SOLTAR, ESPERA_SOLTADO_MS)
 
 LIENZO_W, LIENZO_H, ESCALA = 48, 72, 2    # el muñeco se dibuja a 48x72 y se agranda x2
 COLOR_ESTADO = {"verde": (90, 210, 120), "gris": (170, 172, 185), "rojo": (230, 80, 80)}
@@ -490,22 +491,71 @@ class GestorNPCs:
             return cf.apariencia.usuario
         return None
 
+    def seguidor(self, jugador):
+        """El que lo va siguiendo (un prisionero o el Cambiaformas disfrazado), o None."""
+        npc = next((n for n in self.npcs if n.siguiendo is jugador), None)
+        if npc is not None:
+            return npc
+        cf = getattr(self.juego, "cambiaformas", None)
+        if cf is not None and cf.siguiendo is jugador and cf.apariencia is not None:
+            return cf
+        return None
+
+    @staticmethod
+    def _nombre(quien):
+        return quien.usuario if hasattr(quien, "usuario") else quien.apariencia.usuario
+
+    def _seguidor_cerca(self, jugador):
+        quien = self.seguidor(jugador)
+        if quien is not None and math.dist(quien.centro, jugador.hitbox.center) <= RADIO_SOLTAR:
+            return quien
+        return None
+
     def pista(self, jugador):
-        quien = self.cerca(jugador)
-        if quien is None or any(n.siguiendo is jugador for n in self.npcs):
+        seguidor = self.seguidor(jugador)
+        if seguidor is not None:
+            if self._seguidor_cerca(jugador) is not None:
+                return f"Decirle a {self._nombre(seguidor)} que te espere aquí"
             return None
-        usuario = quien.usuario if hasattr(quien, "usuario") else quien.apariencia.usuario
-        return f"Pedirle a {usuario} que venga a la cápsula"
+        quien = self.cerca(jugador)
+        if quien is None:
+            return None
+        return f"Pedirle a {self._nombre(quien)} que venga a la cápsula"
+
+    def soltar(self, jugador):
+        """Junto al que lo sigue: "espérame aquí". Deja de seguirlo y se queda
+        quieto un rato (ESPERA_SOLTADO_MS) por si vuelve por él; después
+        vuelve a pasear. El Cambiaformas disfrazado también, pero sin hablar
+        (como cuando aceptó: una pista). True si soltó a alguien."""
+        quien = self._seguidor_cerca(jugador)
+        if quien is None:
+            return False
+        if isinstance(quien, NPC):
+            quien.siguiendo, quien.ruta, quien.lejos_ms = None, [], 0
+            quien.destino_paseo = None
+            quien.espera_ms = ESPERA_SOLTADO_MS
+            quien.decir(FRASE_ESPERA)
+            jugador.avisar(f"{quien.usuario} se queda esperándote aquí.", (210, 210, 220))
+        else:
+            quien.siguiendo, quien.siguiendo_solo_ms = None, 0
+            quien.burbuja, quien.burbuja_ms = "...", 2500
+            jugador.avisar(f"{quien.apariencia.usuario} asiente y se queda.", (210, 210, 220))
+        if hasattr(self.juego, "sonar"):
+            self.juego.sonar("menu_ok", 0.4)
+        return True
 
     def hablar(self, jugador):
-        """Interactuar cerca de un prisionero: "¿vienes conmigo?". True si había alguien."""
+        """Interactuar cerca de un prisionero: "¿vienes conmigo?" (o, junto al
+        que ya lo sigue, "espérame aquí"). True si había alguien."""
+        if self.soltar(jugador):
+            return True
         quien = self.cerca(jugador)
         if quien is None:
             return False
-        cf = getattr(self.juego, "cambiaformas", None)
-        if (any(n.siguiendo is jugador for n in self.npcs)
-                or (cf is not None and cf.siguiendo is jugador)):
-            jugador.avisar("Ya llevas a alguien: llévalo primero a la cápsula.", (255, 214, 64))
+        seguidor = self.seguidor(jugador)
+        if seguidor is not None:
+            jugador.avisar(f"Ya llevas a {self._nombre(seguidor)}. Para que te espere, "
+                           f"[{jugador.nombre_tecla('interactuar')}] junto a él.", (255, 214, 64))
             return True
         if not isinstance(quien, NPC):
             quien.pedir_que_siga(jugador)       # el Cambiaformas: acepta callado

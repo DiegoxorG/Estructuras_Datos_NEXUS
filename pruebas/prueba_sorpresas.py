@@ -133,7 +133,7 @@ j1.cerrar_panel()
 print("tutorial: terminado, la puerta ya abre con el código")
 
 # ================= Sigilo =================
-g = nueva_partida(); g.tutorial.activo = False; g._terminar_tutorial()
+g = nueva_partida(); g.saltar_tutorial()
 j1, j2 = g.jugadores
 for a in g.aliens:
     a.descanso_ms = 10 ** 9
@@ -251,6 +251,28 @@ ev.terminar()
 for a in g.aliens:
     a.descanso_ms = 10 ** 9; a.alerta = False
 cap(g, "sorpresas_c_apagon.png")
+# La flecha roja hacia la caja buena sale en cualquier dificultad (también
+# en las que no tienen la amarilla) y no se monta con otra flecha.
+from misiones.eventos import COLOR_FLECHA_CAJA
+from screens import flechas
+from juego.dificultad import Dificultad
+dif_antes = g.dificultad
+for dif in (Dificultad("facil"), Dificultad("dificil"), None):
+    g.dificultad = dif
+    g._dibujar()
+    rojos = sum(1 for x in range(0, g.screen.get_width(), 2) for y in range(0, g.screen.get_height(), 2)
+                if g.screen.get_at((x, y))[:3] == COLOR_FLECHA_CAJA)
+    assert rojos > 20, ("no se ve la flecha roja del apagón", dif and dif.clave, rojos)
+g.dificultad = dif_antes
+flechas.empezar()
+lienzo = pygame.Surface((600, 600))
+vista, camara = lienzo.get_rect(), pygame.Rect(0, 0, 600, 600)
+camara.center = j1.hitbox.center
+flechas.flecha_alrededor(lienzo, vista, camara, j1, (j1.hitbox.centerx + 5000, j1.hitbox.centery), (255, 0, 0), "uno")
+flechas.flecha_alrededor(lienzo, vista, camara, j1, (j1.hitbox.centerx + 5000, j1.hitbox.centery + 300), (0, 0, 255), "dos")
+a1, a2 = flechas._angulos
+assert abs(a2 - a1) >= flechas.SEPARACION - 1e-6 and flechas._textos[0].collidelist(flechas._textos[1:]) < 0
+print("apagón: flecha roja a la caja de fusibles (con o sin flecha de dificultad)")
 otra = next(c for c in ev.cajas if c is not caja)
 poner(j1, libre_cerca(g, otra["rect"].center))
 assert "no tiene daño" in ev.pista(j1)
@@ -279,6 +301,21 @@ for _ in range(int(420 * 1000 / DT)):
         apagones_vistos += 1
 print("eventos en ~7 min sin arreglar la luz:", ev.historial[-12:])
 assert apagones_vistos <= 1 and len(set(ev.historial)) >= 2
+# Y si la arreglan enseguida: el apagón sale poco (pesos) y nunca dos seguidos
+# antes de ENTRE_APAGONES_S.
+from misiones.eventos import ENTRE_APAGONES_S
+if ev.apagon:
+    ev.restaurar_luz()
+ev.rng = random.Random(3)
+cuando, t = [], 0
+for _ in range(int(20 * 60 * 1000 / 100)):
+    ev.actualizar(100); t += 100
+    if ev.apagon:
+        cuando.append(t)
+        ev.restaurar_luz()
+separaciones = [b - a for a, b in zip(cuando, cuando[1:])]
+assert len(cuando) <= 6 and all(d >= ENTRE_APAGONES_S * 1000 for d in separaciones), cuando
+print(f"apagones en 20 min arreglándolos al toque: {len(cuando)} (antes salían ~9)")
 ev.restaurar_luz()
 if ev.activo:
     ev.terminar()
@@ -312,7 +349,7 @@ ev.restaurar_luz()
 g3 = nueva_partida()
 g3.iniciar_partida(); g3.quitar_cambiaformas()
 assert g3.mundo.paredes.count(g3.mision.puerta) == 1
-g3.tutorial.activo = False; g3._terminar_tutorial()
+g3.saltar_tutorial()
 for a in g3.aliens:
     a.descanso_ms = 10 ** 9
 k1 = g3.jugadores[0]
@@ -328,7 +365,7 @@ print("segunda ronda: la puerta de la prisión se abre y deja pasar")
 # ================= Sellos del Forjador =================
 from entidades import acciones_rol
 g4 = nueva_partida(("Tecnomante", "Forjador"))
-g4.tutorial.activo = False; g4._terminar_tutorial()
+g4.saltar_tutorial()
 for a in g4.aliens:
     a.descanso_ms = 10 ** 9
 forj = g4.jugadores[1]
@@ -378,7 +415,7 @@ print("sellos: el Forjador repara un panel y levanta una barrera que frena solo 
 
 # ================= Hackeo desde la sala de control =================
 g5 = nueva_partida(("Tecnomante", "Forjador"))
-g5.tutorial.activo = False; g5._terminar_tutorial()
+g5.saltar_tutorial()
 tec = g5.jugadores[0]
 terminal = next(t for t in g5.terminales if t["clave"] == "terminal_control")
 vigia5 = next(a for a in g5.aliens if a.tipo == "vigia")
@@ -391,7 +428,7 @@ print("hackeo: la terminal de la sala de control apaga al Vigía junto a las con
 
 # ================= Los aliens rodean las paredes para llegar a un ruido =================
 g6 = nueva_partida(("Tecnomante", "Forjador"))
-g6.tutorial.activo = False; g6._terminar_tutorial()
+g6.saltar_tutorial()
 for j in g6.jugadores:
     j.invulnerable_ms = 10 ** 9
 afuera = (g6.mision.puerta.left - 60, g6.mision.puerta.centery)   # la alarma del código malo

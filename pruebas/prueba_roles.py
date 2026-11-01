@@ -54,7 +54,7 @@ g._manejar_tecla(pygame.K_RETURN); avanzar(); g.current_screen = "roles"
 g.seleccion_roles[0]["cursor"] = 0; g._manejar_tecla(pygame.K_e)
 g.seleccion_roles[1]["cursor"] = 1; g._manejar_tecla(pygame.K_RETURN)
 avanzar(); g.current_screen = "partida"
-g.tutorial.activo = False; g._terminar_tutorial()
+g.saltar_tutorial()
 g.mision.abrir_puerta()      # para recorrer la nave entera
 j1, j2 = g.jugadores
 print("\njugadores:", [j.rol for j in g.jugadores])
@@ -260,6 +260,50 @@ poner(j2, P(768, 640))
 a1.hitbox.topleft = LEJOS          # fuera de su pantalla
 cap("roles_h_sintonia.png")
 print("\nSintonía de señales: flechas hacia los aliens fuera de pantalla (ver captura)")
+
+# Y los que tiene cerca (en su pantalla) pero no ve: sus pasos, en rosado.
+from screens import roles as dibujo_roles
+def rosados(superficie):
+    return sum(1 for x in range(0, superficie.get_width(), 2) for y in range(0, superficie.get_height(), 2)
+               if (lambda c: c[0] > 200 and 80 < c[1] < 170 and c[2] > 150)(superficie.get_at((x, y))))
+def caminar_y_dibujar(jugador, alien, visibles, oscuro=False):
+    lienzo = pygame.Surface((800, 600)); lienzo.fill((0, 0, 0))
+    camara = pygame.Rect(0, 0, 800, 600); camara.center = jugador.hitbox.center
+    offset = (camara.x, camara.y)
+    inicio = (jugador.hitbox.centerx + 150, jugador.hitbox.centery - 120)
+    t = pygame.time.get_ticks()
+    for k in range(8):
+        alien.hitbox.center = (inicio[0] + k * 20, inicio[1])
+        dibujo_roles.dibujar_pasos(lienzo, offset, camara, jugador, [alien], visibles, oscuro, t + k * 120)
+    return lienzo
+a1.hitbox.topleft = LEJOS
+dibujo_roles._pasos.clear()
+assert rosados(caminar_y_dibujar(j2, a1, [])) > 10, "el Resonante oye los pasos del que no ve"
+dibujo_roles._pasos.clear()
+assert rosados(caminar_y_dibujar(j2, a1, [a1])) == 0, "al que ve no le hacen falta"
+dibujo_roles._pasos.clear()
+assert rosados(caminar_y_dibujar(j2, a1, [a1], oscuro=True)) > 10, "a oscuras, aunque esté en su campo"
+dibujo_roles._pasos.clear()
+assert rosados(caminar_y_dibujar(j1, a1, [])) == 0, "los demás roles no los oyen"
+class Sombra:        # (la Sombra no hace ruido al caminar)
+    pass
+assert not dibujo_roles._oye_pasos_de(Sombra())
+pygame.image.save(caminar_y_dibujar(j2, a1, []), os.path.join(OUT, "roles_h2_pasos.png"))
+# En la partida: un alien detrás de una pared, cerca del Resonante.
+cerca = None
+for dx in range(-420, 421, 30):
+    for dy in range(-260, 261, 30):
+        q = g.mundo.punto_libre((j2.hitbox.centerx + dx, j2.hitbox.centery + dy), 40, 40)
+        if math.dist(q, j2.hitbox.center) < 450 and not g.mundo.linea_libre(j2.hitbox.center, q):
+            cerca = q; break
+    if cerca: break
+if cerca:
+    dibujo_roles._pasos.clear()
+    for k in range(8):
+        a1.hitbox.center = g.mundo.punto_libre((cerca[0] + k * 14, cerca[1]), *a1.hitbox.size)
+        g._dibujar()
+    cap("roles_h3_pasos_partida.png")
+print("Sintonía: pasos rosados de los aliens cercanos que no ve (detrás de una pared o a oscuras)")
 
 rol(j2, "Resonante", "INTERCEPCION")
 g._tecla_en_partida(pygame.K_MINUS)

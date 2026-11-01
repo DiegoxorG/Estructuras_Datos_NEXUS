@@ -1,4 +1,4 @@
-"""La ventana que presenta a un tipo de alien nuevo (modo Tutorial).
+"""La ventana que presenta a un tipo de alien nuevo (dificultad Fácil).
 
 En la vista del jugador que lo vio: todo oscurecido menos un círculo alrededor
 del alien, un anillo de su color que late, una flecha desde la ventana hasta
@@ -135,7 +135,7 @@ def _dibujar_caja(screen, caja, partes, color, figura, presentacion, jugador):
         screen.blit(imagen, imagen.get_rect(center=marco.center))
         x = marco.right + 16
     y = caja.y + 14
-    screen.blit(f_chica.render("TUTORIAL  ·  ALIEN NUEVO  ·  el juego está en pausa", True, COLOR_SUAVE), (x, y))
+    screen.blit(f_chica.render("ALIEN NUEVO  ·  el juego está en pausa", True, COLOR_SUAVE), (x, y))
     y += f_chica.get_linesize()
     screen.blit(f_titulo.render(partes["titulo"], True, color), (x, y))
     y += f_titulo.get_linesize() + 6
@@ -153,7 +153,8 @@ def _aviso_otra_vista(screen, vista, numero, tipo):
     velo.fill((0, 0, 0, 140))
     screen.blit(velo, vista.topleft)
     f = fuente_de_tamano(16 if vista.height < 500 else 19)
-    texto = f.render(f"Pausa: el jugador {numero} encontró un {datos_tipo(tipo)['nombre']}", True, COLOR_TEXTO)
+    quien = "a la Sombra" if tipo == "sombra" else f"un {datos_tipo(tipo)['nombre']}"
+    texto = f.render(f"Pausa: el jugador {numero} encontró {quien}", True, COLOR_TEXTO)
     caja = texto.get_rect(center=vista.center).inflate(30, 16)
     fondo = pygame.Surface(caja.size, pygame.SRCALPHA)
     fondo.fill(COLOR_FONDO)

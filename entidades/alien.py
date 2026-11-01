@@ -26,7 +26,7 @@ responde "sí" a "¿ve a un jugador?" salvo que lo tenga casi encima.
 Los sprites de los aliens (de Anny; el del Cambiaformas, de Joseph) están en
 Imagenes/Aliens/<carpeta>/ con el mismo formato que los personajes (8
 direcciones, idle/breathing/walking; running sirve de walking).
-Un tipo sin carpeta (el Rastreador) se sigue dibujando con formas.
+Si falta la carpeta de un tipo, se dibuja con formas (respaldo).
 """
 
 import os
@@ -52,6 +52,11 @@ DURACION_BUSQUEDA_MS = 3000      # cuánto busca después de perder el rastro
 DURACION_DESCANSO_MS = 2500      # cuánto se queda quieto tras atrapar a alguien
 SEPARACION_RASTRO = 36           # cada cuánto deja un punto en el rastro
 TIEMPO_ATASCADO_MS = 900         # sin avanzar este tiempo = se rinde
+# Patrulla con un sello o una puerta cortándole la ruta: un punto al que solo
+# llega dando un rodeo mucho más largo que su recorrido normal cuenta como
+# inalcanzable (antes daba la vuelta a media nave para llegar al otro lado).
+DESVIO_MAX = 1.6                 # el rodeo puede ser hasta esto × lo normal...
+DESVIO_EXTRA_PX = 350            # ...más esto
 
 ANCHO_HITBOX, ALTO_HITBOX = 34, 20
 
@@ -100,6 +105,7 @@ def sprites_de(tipo):
             muestra = (animaciones.get("idle", {}).get("south") or [None])[0]
             if muestra is not None:
                 contenido = muestra.get_bounding_rect()
+                _alinear_pies(animaciones, contenido.bottom)
                 # Cuánto aire transparente hay debajo de los pies, y la caja de
                 # lo que se ve (para poner encima el "!" y los ojos).
                 resultado = {"animaciones": animaciones,
@@ -107,6 +113,31 @@ def sprites_de(tipo):
                              "contenido": contenido}
     _cache_sprites[tipo] = resultado
     return resultado
+
+
+def _alinear_pies(animaciones, base):
+    """Corre cada dirección para que los pies queden a la misma altura.
+
+    Las hojas no vienen todas alineadas: en la del Vigía caminando al oeste
+    el monstruo está ~7 px (sin escalar) más arriba que en la del suroeste o
+    el noroeste, así que al caminar a la izquierda, cada vez que cambiaba
+    entre esas direcciones parecía que saltaba. Los pies de una dirección son
+    lo más bajo de sus cuadros (el pie que pisa); todas se llevan a `base`
+    (la de quieto de frente, con la que se calcula dónde se dibuja)."""
+    for por_direccion in animaciones.values():
+        for direccion, cuadros in list(por_direccion.items()):
+            cajas = [c.get_bounding_rect() for c in cuadros]
+            pies = [caja.bottom for caja in cajas if caja.height]
+            if not pies:
+                continue
+            dy = base - max(pies)
+            if dy:
+                corridos = []
+                for cuadro in cuadros:
+                    nuevo = pygame.Surface(cuadro.get_size(), pygame.SRCALPHA)
+                    nuevo.blit(cuadro, (0, dy))
+                    corridos.append(nuevo)
+                por_direccion[direccion] = corridos
 
 
 def _distancia(a, b):
@@ -142,7 +173,7 @@ class Alien:
         self.alerta = False               # huida final: más rápido y ve más lejos
         self.potencia_nexus = 0.0         # 0-1: cuánto le va ganando el rojo en NEXUS
         # La dificultad (dificultad.py) multiplica velocidad, visión y oído;
-        # el juego los pone cada frame. 1.0 = Difícil (como era el juego).
+        # el juego los pone cada frame. 1.0 = Pesadilla (los números base).
         self.ajuste_vel = self.ajuste_vision = self.ajuste_oido = 1.0
         self.atascado_ms = 0
         self.tiempo_ms = 0                # reloj propio, para animaciones
@@ -200,6 +231,19 @@ class Alien:
         dueño = escondite.get("revisado_por")
         return dueño is None or dueño is alien
 
+    def _revisando_ocupado(self):
+        esc = self.escondite_objetivo
+        return (esc is not None and esc.get("revisado_por") is self
+                and esc.get("ocupante") is not None and esc.get("enfriamiento_ms", 0) <= 0)
+
+    def soltar_escondites(self, escondites):
+        """Suelta los escondites que marcó como "lo estoy revisando" y ya no
+        revisa (se fue, lo cambió por otro, salió el de adentro...). Si no, el
+        escondite quedaba en rojo y ningún alien podía volver a revisarlo."""
+        for esc in escondites:
+            if esc.get("revisado_por") is self and esc is not self.escondite_objetivo:
+                esc["revisado_por"] = None
+
     def percibir(self, jugadores, mundo, escondites=()):
         """Responde las preguntas del árbol con lo que pasa en este frame."""
         visibles = [j for j in jugadores
@@ -211,9 +255,20 @@ class Alien:
         if self.objetivo is not None:
             # Lo último que vio: si lo pierde, va a buscar ahí.
             self.punto_ruido = self.objetivo.hitbox.center
+        elif self._revisando_ocupado():
+            # Ya está revisando un escondite con alguien adentro: no lo cambia
+            # por otro que también oiga. (Antes, con dos escondites juntos y
+            # alguien en cada uno, saltaba de uno al otro según qué latido
+            # sonara más, y se quedaba parado al frente sin que empezara el
+            # minijuego de ninguno.)
+            self.punto_ruido = self.escondite_objetivo["ocupante"].hitbox.center
         else:
             # Un latido fuerte se oye aunque no haya línea de vista: el pulso de
-            # cada jugador decide qué tan lejos llega su ruido.
+            # cada jugador decide qué tan lejos llega su ruido. Si ya iba hacia
+            # un escondite y todavía oye al de adentro, sigue con ese.
+            actual = self.escondite_objetivo
+            jugadores = sorted(jugadores, key=lambda j: 0 if (actual is not None and j.escondido
+                                                              and j.escondite is actual) else 1)
             for jugador in jugadores:
                 if not jugador.cazable:
                     continue
@@ -279,6 +334,7 @@ class Alien:
         self.accion, self.camino = self.arbol.decidir(condiciones)
         antes = self.hitbox.center
         self._ejecutar(self.accion, dt, factor, mundo, al_atrapar, al_revisar)
+        self.soltar_escondites(escondites)
         self.moviendose = self.hitbox.center != antes
         self._cansarse(dt)
 
@@ -369,10 +425,14 @@ class Alien:
             escondite = self.escondite_objetivo
             centro = escondite["rect"].center
             self.angulo = math.atan2(centro[1] - self.centro[1], centro[0] - self.centro[0])
-            if escondite.get("revisado_por") is None:
+            ocupante = escondite.get("ocupante")
+            sin_minijuego = (ocupante is not None and getattr(ocupante, "minijuego", None) is None)
+            if escondite.get("revisado_por") is None or sin_minijuego:
+                # (Si ya era suyo pero el de adentro no tiene minijuego, se le
+                # arranca: que nunca se quede parado al frente sin más.)
                 escondite["revisado_por"] = self
                 if al_revisar is not None:
-                    al_revisar(escondite.get("ocupante"), self, escondite)
+                    al_revisar(ocupante, self, escondite)
             return
 
         if accion == "ATRAPAR":
@@ -440,20 +500,31 @@ class Alien:
     def _elegir_punto_patrulla(self, mundo, version):
         """Desde el punto que le toca, el primero de su ruta al que puede llegar:
         directo si la línea está libre, o rodeando (navegacion.py) si no. Si a
-        ninguno se puede llegar, se queda quieto hasta que algo se abra."""
+        ninguno se puede llegar, se queda quieto hasta que algo se abra.
+
+        Con algo cerrado (un sello, una puerta), "poder llegar" es sin un
+        rodeo mucho más largo que ir por su ruta (DESVIO_MAX): así patrulla su
+        lado en vez de dar la vuelta a media nave."""
         self._patrulla_quieto = False
         self._patrulla_directa = True
         n = len(self.ruta)
         if n > 1 and hasattr(mundo, "paredes_base"):     # (las pruebas usan mundos de mentira)
             from juego import navegacion
             nav = navegacion.de_mundo(mundo, self.hitbox.width, self.hitbox.height)
+            hay_cierres = bool(getattr(mundo, "bloqueos_alien", None)) or \
+                any(p not in mundo.paredes_base for p in mundo.paredes)
+            por_ruta = _distancia(self.centro, self.ruta[self.indice_ruta])   # lo normal, siguiendo su ruta
             for k in range(n):
                 i = (self.indice_ruta + k) % n
                 punto = self.ruta[i]
+                if k > 0:
+                    por_ruta += _distancia(self.ruta[(i - 1) % n], punto)
                 if nav.libre_entre(self.centro, punto):
                     self.indice_ruta, self._patrulla_directa = i, True
                     break
-                if nav.conectados(self.centro, punto):
+                if nav.conectados(self.centro, punto) and (
+                        not hay_cierres or nav.distancia_camino(
+                            self.centro, punto, por_ruta * DESVIO_MAX + DESVIO_EXTRA_PX) is not None):
                     self.indice_ruta, self._patrulla_directa = i, False
                     break
             else:
@@ -625,12 +696,23 @@ class Alien:
         if datos is None:
             return None, None
         estado = "walking" if self.moviendose else "breathing"
-        indice = round(self.angulo / (math.pi / 4)) % 8
+        indice = self._indice_direccion()
         frames = datos["animaciones"].get(estado, {}).get(_DIRECCIONES_ANGULO[indice]) or []
         if not frames:
             return None, None
         cuadro = int(self.tiempo_ms / (1000 / FPS_ANIMACION)) % len(frames)
         return frames[cuadro], datos
+
+    def _indice_direccion(self):
+        """Cuál de las 8 hojas toca según hacia dónde mira, con un margen: si
+        camina justo entre dos direcciones (por ejemplo, oeste y suroeste) no
+        salta de una hoja a la otra en cada cuadro."""
+        exacto = self.angulo / (math.pi / 4)
+        previo = getattr(self, "_indice_hoja", None)
+        if previo is not None and abs((exacto - previo + 4) % 8 - 4) < 0.7:
+            return previo
+        self._indice_hoja = round(exacto) % 8
+        return self._indice_hoja
 
     def _posicion_sprite(self, imagen, datos, offset):
         rect = imagen.get_rect()

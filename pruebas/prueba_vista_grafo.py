@@ -50,7 +50,8 @@ for ancho, alto in [(1366, 768), (1920, 1080)]:
         e["listo"], e["rol"] = True, NOM[i]
     g.dificultad = Dificultad("normal")
     g.iniciar_partida(); avanzar(g); g.current_screen = "partida"
-    g.tutorial.activo = False; g._terminar_tutorial()
+    g.saltar_tutorial()
+    g.presentacion = None   # la ventana de alien nuevo pausaría la prueba
     red = g.nexus
     j1 = g.jugadores[0]
 

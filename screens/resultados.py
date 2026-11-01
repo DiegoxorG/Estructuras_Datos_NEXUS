@@ -51,8 +51,6 @@ def render_resultados(screen, jugadores, font=None, small_font=None,
         if mision is not None and mision.activa:
             if mision.resultado == "victoria":
                 titulo, color = "¡ESCAPARON DE LA NAVE!", COLOR_BARRA
-            elif getattr(mision, "motivo", None) == "nexus":
-                titulo, color = "LOS ALIENS TOMARON NEXUS", COLOR_BARRA_MALA
             else:
                 titulo, color = "NO LOGRARON ESCAPAR", COLOR_BARRA_MALA
         encabezado = titulo_f.render(titulo, True, color)

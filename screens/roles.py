@@ -14,6 +14,7 @@ import math
 
 import pygame
 
+from juego import salas_selladas
 from juego.fuentes import fuente, fuente_de_tamano
 
 
@@ -120,11 +121,10 @@ def dibujar_piso(screen, offset, camara, dueño, extras, tiempo_ms):
         borde = (255, 214, 64) if cerca is p else (COLOR_BIOMANTE if p["reparado"] else COLOR_ALIEN)
         pygame.draw.rect(screen, borde, caja, 2, border_radius=3)
 
-    # Las piezas solo las reconoce el Forjador (Ingenio mecánico), salvo que no
-    # haya Forjador o que un mensaje de NEXUS las haya revelado.
+    # Las piezas solo las reconoce el Forjador (Ingenio mecánico); si no hay
+    # Forjador, quien lleve el kit de herramientas (Mision.ve_piezas).
     mision = extras.get("mision")
-    visibles_todos = mision is not None and mision.piezas_para_todos
-    if _tiene(dueño, "INGENIO") or visibles_todos:
+    if mision.ve_piezas(dueño) if mision is not None else _tiene(dueño, "INGENIO"):
         for pieza in extras.get("piezas", ()):
             if pieza["recogida"] or not pieza["rect"].colliderect(camara):
                 continue
@@ -208,6 +208,82 @@ def dibujar_encima(screen, offset, camara, dueño, extras, tiempo_ms):
 
 # -- En el HUD del viewport ---------------------------------------------------------------
 
+# Pasos que oye la Sintonía: por alien, dónde pisó la última vez y sus huellas.
+PASO_PX = 38                 # cada cuánto deja una huella (el Guardia, más)
+DURA_HUELLA_MS = 1600
+DURA_ONDA_MS = 650
+COLOR_PASOS = (255, 120, 200)
+_pasos = {}
+
+
+def _oye_pasos_de(alien):
+    """La Sombra no hace ruido al caminar; el Cambiaformas disfrazado camina
+    como un prisionero más."""
+    if alien.__class__.__name__ == "Sombra":
+        return False
+    return not getattr(alien, "disfrazado", False)
+
+
+def _registrar_pasos(alien, ahora):
+    rastro = _pasos.get(id(alien))
+    x, y = alien.hitbox.midbottom
+    if rastro is None or rastro["alien"] is not alien:
+        _pasos[id(alien)] = {"alien": alien, "ultimo": (x, y), "huellas": [], "lado": 1}
+        return
+    lx, ly = rastro["ultimo"]
+    d = math.hypot(x - lx, y - ly)
+    if d > 400:                              # lo movieron de golpe: empieza de nuevo
+        rastro["ultimo"], rastro["huellas"] = (x, y), []
+        return
+    paso = PASO_PX * (1.8 if alien.__class__.__name__ == "Guardia" else 1)
+    if d >= paso:
+        angulo = math.atan2(y - ly, x - lx)
+        lado = rastro["lado"]
+        ancho = 9 if alien.__class__.__name__ != "Guardia" else 22
+        hx = x + math.cos(angulo + math.pi / 2) * ancho * lado
+        hy = y + math.sin(angulo + math.pi / 2) * ancho * lado
+        rastro["huellas"].append((hx, hy, ahora, alien.__class__.__name__ == "Guardia"))
+        rastro["ultimo"], rastro["lado"] = (x, y), -lado
+    rastro["huellas"] = [h for h in rastro["huellas"] if ahora - h[2] < DURA_HUELLA_MS]
+
+
+def dibujar_pasos(screen, offset, camara, dueño, aliens, visibles, a_oscuras, tiempo_ms):
+    """Sintonía de señales: los aliens que están en su pantalla pero no ve
+    (detrás de una pared, fuera de su campo de visión o a oscuras) se oyen:
+    sus pasos salen como huellas rosadas y una onda donde acaba de pisar.
+    (Los que están más lejos ya los marcan las flechas del borde.)"""
+    if not _tiene(dueño, "SINTONIA"):
+        return
+    ids_visibles = {id(a) for a in visibles}
+    for alien in aliens:
+        if not camara.inflate(200, 200).colliderect(alien.hitbox) or not _oye_pasos_de(alien):
+            continue
+        _registrar_pasos(alien, tiempo_ms)
+        if id(alien) in ids_visibles and not a_oscuras:
+            continue                         # lo ve: no hace falta
+        rastro = _pasos.get(id(alien))
+        if not rastro:
+            continue
+        for hx, hy, t, grande in rastro["huellas"]:
+            vida = 1 - (tiempo_ms - t) / DURA_HUELLA_MS
+            if vida <= 0:
+                continue
+            w, h = (16, 10) if grande else (9, 6)
+            huella = pygame.Surface((w + 2, h + 2), pygame.SRCALPHA)
+            pygame.draw.ellipse(huella, (*COLOR_PASOS, int(210 * vida)), (1, 1, w, h))
+            screen.blit(huella, (int(hx - offset[0] - w / 2), int(hy - offset[1] - h / 2)))
+        if rastro["huellas"]:
+            # La onda del último paso: se abre y se apaga.
+            hx, hy, t, grande = rastro["huellas"][-1]
+            edad = (tiempo_ms - t) / DURA_ONDA_MS
+            if 0 <= edad < 1:
+                radio = int((10 + 26 * edad) * (1.6 if grande else 1))
+                onda = pygame.Surface((radio * 2 + 4, radio * 2 + 4), pygame.SRCALPHA)
+                pygame.draw.circle(onda, (*COLOR_PASOS, int(200 * (1 - edad))), (radio + 2, radio + 2),
+                                   radio, 2)
+                screen.blit(onda, (int(hx - offset[0] - radio - 2), int(hy - offset[1] - radio - 2)))
+
+
 def dibujar_flechas(screen, vista, camara, dueño, extras):
     """Sintonía de señales: flechas en el borde hacia los aliens que no se ven."""
     if not _tiene(dueño, "SINTONIA"):
@@ -244,14 +320,21 @@ def render_minimapa(screen, vista, dueño, extras):
     mundo = extras.get("mundo")
     if mundo is None:
         return
-    lado = int(min(vista.width * 0.34, vista.height * 0.42, 260))
-    clave = (id(mundo.imagen), lado)
+    # Abajo a la izquierda, justo encima del pulso: arriba a la derecha lo
+    # tapaban los avisos, la barra de confianza y el celular.
+    from screens.paneles import rect_pulso
+    pulso = rect_pulso(screen, vista)
+    lado = int(min(vista.width * 0.34, pulso.top - 8 - (vista.y + 116), 260))
+    if lado < 60:
+        return
+    clave = (id(mundo.imagen), lado, salas_selladas.clave_cache(mundo))
     if clave not in _cache_minimapa:
-        miniatura = pygame.transform.smoothscale(mundo.imagen, (lado, lado))
+        miniatura = salas_selladas.oscurecer_miniatura(
+            pygame.transform.smoothscale(mundo.imagen, (lado, lado)), mundo)
         miniatura.fill((120, 120, 140), special_flags=pygame.BLEND_RGB_MULT)
         _cache_minimapa[clave] = miniatura
     caja = pygame.Rect(0, 0, lado, lado)
-    caja.topright = (vista.right - 12, vista.y + 92)
+    caja.bottomleft = (pulso.left, pulso.top - 8)
     screen.blit(_cache_minimapa[clave], caja.topleft)
     pygame.draw.rect(screen, COLOR_TERMINAL, caja, 2)
     ex, ey = lado / mundo.ancho, lado / mundo.alto
@@ -282,5 +365,6 @@ def render_minimapa(screen, vista, dueño, extras):
     for jugador in extras.get("jugadores", ()):
         color = (255, 255, 255) if jugador is dueño else (255, 214, 64)
         pygame.draw.circle(screen, color, a_mapa(jugador.hitbox.center), 3)
+    # El nombre va arriba del mapa: abajo queda el pulso.
     _texto(screen, "Escaneo" if "escaneo" in dueño.efectos else "Estado de la nave",
-           caja.centerx, caja.bottom + 2, COLOR_TERMINAL, fuente_de_tamano(13))
+           caja.centerx, caja.top - 18, COLOR_TERMINAL, fuente_de_tamano(13))

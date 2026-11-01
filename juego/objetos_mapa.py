@@ -38,13 +38,19 @@ USAR_ARCHIVOS = True
 # las terminales NEXUS no tienen valores de fábrica: un mapa sin cápsula no
 # tiene misión y se juega como antes, por tiempo (ver mision.py).
 #
+# `puertas_codigo`: las puertas que se abren con un código; cada una trae sus
+# notas de código (en una sale su código). La primera es la de la prisión (la
+# fase 1). `puerta` es el formato viejo (una sola): se lee y pasa a ser la
+# primera de `puertas_codigo`.
+#
 # `tipos_aliens` va de la mano con `rutas_aliens`: el tipo del alien de cada
 # ruta (data/tipos_alien.py). Las `compuertas` las cierra un evento aleatorio
 # (eventos.py) y las `puertas_dobles` se abren con dos jugadores a la vez
 # (puertas.py).
 PARTES = ("spawn", "rutas_aliens", "tipos_aliens", "escondites", "terminales", "paneles",
-          "piezas", "celdas", "puerta", "notas", "consolas", "capsula", "consumibles",
-          "nexus", "compuertas", "puertas_dobles", "fusibles", "pruebas", "salas")
+          "piezas", "celdas", "puertas_codigo", "puerta", "notas", "consolas", "capsula", "consumibles",
+          "nexus", "compuertas", "puertas_dobles", "fusibles", "pruebas", "salas",
+          "guardia", "planta")
 
 
 def ruta_archivo(mapa):
@@ -78,13 +84,13 @@ def por_defecto():
         "version": VERSION,
         "spawn": None,     # None = alrededor del centro del mapa
         "rutas_aliens": [],
-        "tipos_aliens": [],  # vacío = todos rastreadores
+        "tipos_aliens": [],  # vacío = todos del tipo por defecto (Vigía)
         "escondites": [],
         "terminales": [],
         "paneles": [],
         "piezas": [],
         "celdas": [],
-        "puerta": None,      # {"rx", "ry", "ancho", "alto"}: la puerta de la prisión
+        "puertas_codigo": [],  # [{"rx", "ry", "ancho", "alto", "notas": [[rx, ry], ...], "notas_dificil": [...]}]; la 1.ª, la de la prisión
         "notas": [],
         "consolas": [],
         "capsula": None,     # [rx, ry]
@@ -95,6 +101,8 @@ def por_defecto():
         "fusibles": [],       # cajas de fusibles: sin ellas no hay apagones
         "pruebas": [],        # dónde pueden caer las pruebas del infiltrado (se usan 3)
         "salas": [],          # [{"nombre", "rx", "ry", "ancho", "alto"}]: el nombre en el HUD
+        "guardia": None,      # [rx, ry]: el puesto del Guardia (misiones/guardia.py), en la sala de la cápsula
+        "planta": None,       # [rx, ry]: la planta que da la fruta para el Guardia
     }
 
 
@@ -139,17 +147,32 @@ def normalizar(datos):
     datos["piezas"] = [[r(x), r(y)] for x, y in datos.get("piezas", [])]
     for parte in ("celdas", "notas", "consolas", "consumibles", "nexus", "fusibles", "pruebas"):
         datos[parte] = [[r(x), r(y)] for x, y in datos.get(parte) or []]
-    if datos.get("capsula"):
-        datos["capsula"] = [r(datos["capsula"][0]), r(datos["capsula"][1])]
-    else:
-        datos["capsula"] = None
+    for unico in ("capsula", "guardia", "planta"):
+        if datos.get(unico):
+            datos[unico] = [r(datos[unico][0]), r(datos[unico][1])]
+        else:
+            datos[unico] = None
     def rect_normal(puerta):
         return {"rx": r(puerta["rx"]), "ry": r(puerta["ry"]),
                 "ancho": round(min(0.3, max(0.005, float(puerta.get("ancho", 0.02)))), 4),
                 "alto": round(min(0.3, max(0.005, float(puerta.get("alto", 0.07)))), 4)}
 
-    puerta = datos.get("puerta")
-    datos["puerta"] = rect_normal(puerta) if puerta else None
+    # Puertas con código (y el formato viejo, una sola "puerta", pasa a ser la primera).
+    puertas = list(datos.get("puertas_codigo") or [])
+    vieja = datos.pop("puerta", None)
+    if vieja and not puertas:
+        puertas = [dict(vieja, notas=datos.pop("notas_codigo", None) or [])]
+    datos.pop("notas_codigo", None)
+    limpias = []
+    for puerta in puertas:
+        limpia = rect_normal(puerta)
+        limpia["notas"] = [[r(x), r(y)] for x, y in (puerta.get("notas") or [])]
+        # Las que solo aparecen en Difícil (e Inteligente), donde nadie sale
+        # solo de la celda: para que el código de una puerta que en Fácil y
+        # Normal está adentro de la prisión, en Difícil se lea afuera.
+        limpia["notas_dificil"] = [[r(x), r(y)] for x, y in (puerta.get("notas_dificil") or [])]
+        limpias.append(limpia)
+    datos["puertas_codigo"] = limpias
     datos["compuertas"] = [rect_normal(c) for c in datos.get("compuertas") or []]
     dobles = []
     for doble in datos.get("puertas_dobles") or []:
@@ -166,9 +189,11 @@ def normalizar(datos):
                       "alto": round(min(1.0, max(0.002, float(sala.get("alto", 0.05)))), 4)})
     datos["salas"] = salas
 
-    # Un tipo por ruta: se rellena con "rastreador" o se recorta.
-    from data.tipos_alien import TIPOS_ALIEN, TIPO_POR_DEFECTO
-    tipos = [t if t in TIPOS_ALIEN else TIPO_POR_DEFECTO for t in datos.get("tipos_aliens") or []]
+    # Un tipo por ruta: se rellena con el tipo por defecto o se recorta. Uno
+    # que no es de ruta (o que ya no existe, como el Rastreador) pasa a ser el
+    # de por defecto.
+    from data.tipos_alien import ORDEN_TIPOS, TIPO_POR_DEFECTO
+    tipos = [t if t in ORDEN_TIPOS else TIPO_POR_DEFECTO for t in datos.get("tipos_aliens") or []]
     n = len(datos["rutas_aliens"])
     datos["tipos_aliens"] = (tipos + [TIPO_POR_DEFECTO] * n)[:n]
     for parte, prefijo, nombre in (("escondites", "escondite", "Casillero"),

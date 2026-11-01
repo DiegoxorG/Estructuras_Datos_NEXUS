@@ -4,16 +4,31 @@ Cortas a propósito: en la feria nadie lee un párrafo. Campo puede reescribirla
 sin tocar código; dónde está cada nota se pone con el editor de mapa (tecla de
 la herramienta "Notas"), y el texto se les asigna en este orden.
 
-Una de las notas que se alcanzan desde la prisión dice el código de la puerta.
-Cuál es se sortea en cada partida, y el código también (mision.py): por eso
-NOTA_CODIGO lleva {codigo} y se completa al empezar.
+Hay dos tipos de notas: las normales (de historia, con NOTAS) y las de código,
+que vienen con la puerta con código (en el editor, herramienta "Puerta": después
+de ponerla, los clics ponen sus notas). Una de las de código que se alcanzan
+desde la prisión dice el código (se sortea en cada partida, y el código también,
+mision.py: por eso NOTA_CODIGO lleva {codigo}, y {puerta} es su color); las otras dicen algo de
+NOTAS_CODIGO_VACIAS. Si el mapa no tiene notas de código, va en una normal.
 """
 
 NOTA_CODIGO = {
     "titulo": "Nota arrugada",
-    "texto": ("Si alguien encuentra esto: vi al guardia marcar la puerta. "
+    "texto": ("Si alguien encuentra esto: vi al guardia marcar la puerta {puerta}. "
               "El código es {codigo}. No dejen que los oigan."),
 }
+
+# Las notas de código que no salieron sorteadas (en orden; si faltan, se repiten).
+NOTAS_CODIGO_VACIAS = [
+    {"titulo": "Nota rota",
+     "texto": "Anoté el código aquí, pero se borró con la humedad. Debe haber otra copia."},
+    {"titulo": "Papel con números tachados",
+     "texto": "Todos tachados. Alguien lo cambió. Sigan buscando."},
+    {"titulo": "Recordatorio del guardia",
+     "texto": "No dejar el código por ahí. (Lo dejé en otro lado, por si acaso.)"},
+    {"titulo": "Hoja arrancada",
+     "texto": "Solo quedó la mitad. La otra mitad tenía el código."},
+]
 
 NOTAS = [
     {"titulo": "Diario del prisionero 7",

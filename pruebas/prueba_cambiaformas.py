@@ -68,7 +68,7 @@ def nueva_partida():
     g._manejar_tecla(pygame.K_RETURN); avanzar(); g.current_screen = "roles"
     g._manejar_tecla(pygame.K_e); g._manejar_tecla(pygame.K_RETURN)
     avanzar(); g.current_screen = "partida"
-    g.tutorial.activo = False; g._terminar_tutorial()
+    g.saltar_tutorial()
     g.mision.abrir_puerta()
     for a in g.aliens:
         if a is not g.cambiaformas:
@@ -392,6 +392,7 @@ del cf.visible_para
 assert cf.presa is j1, "el que cae en la trampa es su presa"
 # Reportar la suplantación: lo desenmascara.
 cf.presa = None
+g.logros.conseguir("conectado", j1)      # (para reportar abrió el celular)
 texto, puntos = red.reportar(j1, pub.autor)
 assert puntos > 0 and pub.reportada and not cf.disfrazado and cf.expuesto_ms > 0, texto
 assert red.trampa_activa() is None and g.logros.tiene("perfil_robado")
@@ -430,7 +431,10 @@ for n in g.npcs.npcs:
 assert g.npcs.cerca(j1) is cf
 assert g.npcs.escoltado(j1) is None
 assert g.npcs.hablar(j1) and cf.siguiendo is j1 and cf.burbuja == "...", "acepta callado"
-assert "cápsula" in (g.npcs.pista(j1) or "cápsula")
+assert "espere" in (g.npcs.pista(j1) or ""), "junto al que te sigue: que te espere"
+# "Espérame aquí": también se le puede decir al Cambiaformas (callado, otra pista).
+assert g.npcs.hablar(j1) and cf.siguiendo is None and cf.disfrazado and cf.burbuja == "..."
+assert g.npcs.hablar(j1) and cf.siguiendo is j1, "y vuelve a venir si se lo piden"
 for f in range(60 * 6):
     g._actualizar_partida(DT)
     if not cf.disfrazado:
@@ -445,6 +449,7 @@ cf = g.cambiaformas
 j1 = g.jugadores[0]
 cf.disfrazado = True
 cf.pedir_que_siga(j1)
+g.logros.conseguir("despertar")          # (como al terminar el tutorial)
 cf.aturdir(1000)
 assert g.logros.tiene("no_me_enganas") and g.logros.tiene("lobo_con_piel_de_oveja")
 assert cf.siguiendo is None
@@ -513,6 +518,17 @@ assert g.npcs.hablar(j1) and npc.siguiendo is None, "rojo: no viene"
 red.grafo.datos[npc.nodo]["color"] = VERDE
 assert g.npcs.hablar(j1) and npc.siguiendo is j1, "verde: te sigue"
 assert g.npcs.escoltado(j1) == npc.usuario, "el HUD dice a quién llevas"
+# "Espérame aquí": deja de seguirlo y se queda quieto un rato.
+from data.npcs import FRASE_ESPERA, ESPERA_SOLTADO_MS
+assert "espere" in g.npcs.pista(j1)
+assert g.npcs.hablar(j1) and npc.siguiendo is None and npc.burbuja == FRASE_ESPERA
+assert npc.espera_ms == ESPERA_SOLTADO_MS and g.npcs.escoltado(j1) is None
+quieto = npc.centro
+for _ in range(60):
+    g._actualizar_partida(DT)
+assert npc.centro == quieto, "se queda esperando"
+assert g.npcs.hablar(j1) and npc.siguiendo is j1, "y si vuelves por él, te sigue otra vez"
+print("'espérame aquí': el prisionero (y el Cambiaformas disfrazado) deja de seguirte y espera")
 # Lo lleva a la cápsula.
 # Ya casi llegan (puntos caminables cerca de la cápsula): el jugador junto a
 # ella y el prisionero unos pasos atrás, que camina solo hasta ahí.
@@ -544,14 +560,21 @@ poner(j2, (5, 5))
 npc = g.npcs.npcs[0]
 for n in g.npcs.npcs[1:]:
     n.hitbox.center = (5, 5)
+# Lejos de la cápsula: si el NPC quedaba al lado, el Cambiaformas la saboteaba
+# en el primer frame, dejaba de seguir y huía (la prueba fallaba al azar).
+capsula = g.mision.capsula
+npc.hitbox.center = max(g.npcs.puntos, key=lambda q: math.dist(q, capsula.center))
 red.grafo.datos[npc.nodo]["color"] = VERDE
 npc.espera_ms = 10 ** 9; npc.charla_ms = 0
 poner(j1, (npc.centro[0] + 60, npc.centro[1]))
 if g.mundo.colisiona(j1.hitbox):
     poner(j1, (npc.centro[0], npc.centro[1] + 50))
-cf.disfrazado = True
+# Disfrazado de verdad: a veces arrancaba huyendo (huida_ms) y en el primer
+# frame se quitaba el disfraz (la prueba fallaba al azar).
+cf.expuesto_ms = cf.descanso_ms = 0; cf.huir_al_despertar = False
+cf._disfrazarse()
 cf.hitbox.center = (j1.hitbox.centerx + 20, j1.hitbox.centery)
-cf.pedir_que_siga(j1)
+assert cf.pedir_que_siga(j1)
 g.jugadores[1].preso = None
 frames(g, 2)
 assert npc.burbuja and cf.apariencia.usuario in npc.burbuja, npc.burbuja

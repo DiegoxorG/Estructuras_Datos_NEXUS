@@ -1,19 +1,19 @@
-"""La dificultad de la partida: Tutorial, Fácil, Normal, Difícil o Inteligente.
+"""La dificultad de la partida: Fácil, Normal, Difícil o Inteligente.
 
 Los números están en data/dificultad.py. El juego guarda un `Dificultad` en
 `Game.dificultad` y cada parte le pregunta lo suyo con `valor(juego, nombre,
 por_defecto)`: si la partida no tiene dificultad (las pruebas que arman el
-juego a mano), se usa `por_defecto`, que es como estaba el juego (Difícil).
+juego a mano), se usa `por_defecto`: los números base del juego (Pesadilla).
 
 Inteligente tiene un "director": cada 4 s mira cómo va el equipo (cuánto
 avanzó la misión contra el reloj, la confianza en NEXUS, cuántas veces los
 atraparon hace poco y cuántas vidas les quedan) y sube o baja un nivel
-continuo entre Fácil (0) y más que Difícil (3). Los valores de en medio se
+continuo entre Fácil (0) y Pesadilla (3). Los valores de en medio se
 interpolan.
 """
 
 from data.dificultad import (DIFICULTADES, AJUSTES, RITMO_MISION_S, VIDAS, UMBRAL_PLANOS, FLECHA, FUGA_MS,
-                             TUTORIAL, NIVEL_INICIAL, NIVEL_MIN, NIVEL_MAX, REVISAR_CADA_MS,
+                             VIDAS_INFINITAS, PRESENTAR_ALIENS, NIVEL_INICIAL, NIVEL_MIN, NIVEL_MAX, REVISAR_CADA_MS,
                              PASO_MAX, VENTANA_CAPTURAS_MS, NOMBRES_NIVEL)
 
 NIVEL_FIJO = {"facil": 0.0, "normal": 1.0, "dificil": 2.0}
@@ -33,12 +33,13 @@ def nombre_de(clave):
 
 
 def _interpolar(valores, nivel):
-    """Valor en un nivel continuo (0 Fácil, 1 Normal, 2 Difícil). Por encima de
-    Difícil sigue la misma pendiente de Normal a Difícil."""
+    """Valor en un nivel continuo (0 Fácil, 1 Normal, 2 Difícil, 3 Pesadilla).
+    Por encima del último sigue la misma pendiente."""
+    ultimo = len(valores) - 1
     if nivel <= 0:
         return valores[0]
-    if nivel >= 2:
-        return valores[2] + (valores[2] - valores[1]) * (nivel - 2)
+    if nivel >= ultimo:
+        return valores[ultimo] + (valores[ultimo] - valores[ultimo - 1]) * (nivel - ultimo)
     i = int(nivel)
     t = nivel - i
     return valores[i] + (valores[i + 1] - valores[i]) * t
@@ -60,27 +61,28 @@ class Dificultad:
     # -- Lo que preguntan los demás -----------------------------------------------------
 
     def valor(self, nombre):
-        if self.clave == "tutorial":
-            return TUTORIAL[nombre]
         return _interpolar(AJUSTES[nombre], self.nivel)
 
     @property
     def vidas(self):
-        return TUTORIAL["vidas"] if self.clave == "tutorial" else VIDAS[self.clave]
+        return VIDAS[self.clave]
 
     @property
     def vidas_infinitas(self):
-        return self.clave == "tutorial"
+        return self.clave in VIDAS_INFINITAS
+
+    @property
+    def presenta_aliens(self):
+        """Si la primera vez que se ve cada alien sale la ventana que lo explica."""
+        return self.clave in PRESENTAR_ALIENS
 
     @property
     def umbral_planos(self):
-        return TUTORIAL["umbral_planos"] if self.clave == "tutorial" else UMBRAL_PLANOS[self.clave]
+        return UMBRAL_PLANOS[self.clave]
 
     @property
     def flecha(self):
         """Si se dibuja la flecha al objetivo."""
-        if self.clave == "tutorial":
-            return True
         if self.inteligente:
             return self.nivel < 1.5
         return FLECHA[self.clave]
@@ -89,13 +91,12 @@ class Dificultad:
     def fuga_ms(self):
         """Cuánto tarda en salir solo de la celda (None = no sale solo)."""
         if self.inteligente:
-            return {"Fácil": FUGA_MS["facil"], "Normal": FUGA_MS["normal"]}.get(self.nombre_nivel())
+            return {"Fácil": FUGA_MS["facil"], "Normal": FUGA_MS["normal"],
+                    "Difícil": FUGA_MS["dificil"], "Pesadilla": FUGA_MS["pesadilla"]}.get(self.nombre_nivel())
         return FUGA_MS[self.clave]
 
     def nombre_nivel(self, nivel=None):
         """"Fácil", "Normal", "Difícil" o "Pesadilla" según el nivel."""
-        if self.clave == "tutorial":
-            return "Tutorial"
         nivel = self.nivel if nivel is None else nivel
         return next(nombre for tope, nombre in NOMBRES_NIVEL if nivel < tope)
 

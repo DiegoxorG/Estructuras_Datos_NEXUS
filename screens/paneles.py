@@ -105,6 +105,9 @@ def render_panel(screen, vista, jugador):
     panel = jugador.panel
     if panel is None:
         return
+    if panel.get("mosaico"):
+        render_mosaico(screen, vista, jugador)
+        return
 
     ancho = min(int(vista.width * 0.88), 720)
     ancho_texto = ancho - MARGEN * 2
@@ -173,6 +176,296 @@ def render_panel(screen, vista, jugador):
         screen.blit(pie, (caja.x + MARGEN, caja.bottom - MARGEN - pie.get_height()))
 
     screen.set_clip(clip_previo)
+
+
+# -- La Terminal NEXUS: un mosaico con iconos ------------------------------------------------
+
+COLOR_NEXUS = (150, 120, 255)
+COLOR_CASO = (240, 96, 205)        # el caso del Cambiaformas, resaltado
+COLOR_MOSAICO = (32, 35, 62)
+COLOR_MOSAICO_SEL = (56, 61, 104)
+
+
+def _texto_centrado(screen, lineas, f, centro_x, y, color):
+    for linea in lineas:
+        img = f.render(linea, True, color)
+        screen.blit(img, (centro_x - img.get_width() // 2, y))
+        y += f.get_linesize()
+    return y
+
+
+def _ajustar(texto, ancho, alto, tam_max, lineas_max=3):
+    """La letra más grande (hasta tam_max) con la que `texto` cabe en la caja."""
+    for px in range(tam_max, 9, -1):
+        f = fuente_de_tamano(px)
+        lineas = partir_lineas(texto, f, ancho)
+        if len(lineas) <= lineas_max and len(lineas) * f.get_linesize() <= alto and \
+                all(f.size(l)[0] <= ancho for l in lineas):
+            return f, lineas
+    f = fuente_de_tamano(10)
+    return f, partir_lineas(texto, f, ancho)[:lineas_max]
+
+
+def icono_nexus(screen, nombre, centro, tam, color):
+    """Los dibujitos del mosaico de la Terminal NEXUS (formas de pygame)."""
+    cx, cy = int(centro[0]), int(centro[1])
+    t = max(10, int(tam))
+    g = max(2, t // 12)                       # grosor de línea
+    oscuro = (16, 17, 32)
+    if nombre == "celular":
+        cuerpo = pygame.Rect(0, 0, int(t * 0.52), int(t * 0.9))
+        cuerpo.center = (cx, cy)
+        pygame.draw.rect(screen, color, cuerpo, border_radius=max(3, t // 8))
+        pantalla = cuerpo.inflate(-g * 3, -int(t * 0.28))
+        pantalla.y = cuerpo.y + int(t * 0.1)
+        pygame.draw.rect(screen, oscuro, pantalla, border_radius=2)
+        for k in range(3):     # unas burbujitas de chat
+            ancho = int(pantalla.width * (0.7 if k % 2 == 0 else 0.5))
+            burbuja = pygame.Rect(0, 0, ancho, max(2, t // 12))
+            burbuja.topleft = (pantalla.x + 3 if k % 2 == 0 else pantalla.right - ancho - 3,
+                               pantalla.y + 4 + k * (pantalla.height - 6) // 3)
+            pygame.draw.rect(screen, color, burbuja, border_radius=2)
+        pygame.draw.circle(screen, oscuro, (cx, cuerpo.bottom - int(t * 0.08)), max(2, t // 14))
+    elif nombre == "lupa":
+        r = int(t * 0.28)
+        c = (cx - int(t * 0.08), cy - int(t * 0.08))
+        pygame.draw.circle(screen, color, c, r, g + 1)
+        pygame.draw.line(screen, color, (c[0] + int(r * 0.7), c[1] + int(r * 0.7)),
+                         (cx + int(t * 0.38), cy + int(t * 0.38)), g * 2)
+        f = fuente_de_tamano(max(9, int(r * 1.3)))
+        img = f.render("?", True, color)
+        screen.blit(img, img.get_rect(center=c))
+    elif nombre == "ubicacion":
+        r = int(t * 0.26)
+        top = (cx, cy - int(t * 0.12))
+        pygame.draw.polygon(screen, color, [(top[0] - r, top[1] + 2), (top[0] + r, top[1] + 2),
+                                            (cx, cy + int(t * 0.42))])
+        pygame.draw.circle(screen, color, top, r)
+        pygame.draw.circle(screen, oscuro, top, max(2, r // 2))
+        pygame.draw.ellipse(screen, color, (cx - r, cy + int(t * 0.36), r * 2, max(3, t // 10)), max(1, g // 2))
+    elif nombre == "bot":
+        cabeza = pygame.Rect(0, 0, int(t * 0.72), int(t * 0.56))
+        cabeza.center = (cx, cy + int(t * 0.08))
+        pygame.draw.rect(screen, color, cabeza, border_radius=max(3, t // 8))
+        pygame.draw.line(screen, color, (cx, cabeza.y), (cx, cabeza.y - int(t * 0.18)), g)
+        pygame.draw.circle(screen, color, (cx, cabeza.y - int(t * 0.2)), max(2, t // 12))
+        for lado in (-1, 1):
+            pygame.draw.circle(screen, oscuro, (cx + lado * int(t * 0.16), cabeza.centery - int(t * 0.04)),
+                               max(2, t // 11))
+            pygame.draw.rect(screen, color, (cabeza.x - g * 2 if lado < 0 else cabeza.right, cabeza.centery - g,
+                                             g * 2, g * 3))
+        pygame.draw.line(screen, oscuro, (cx - int(t * 0.14), cabeza.bottom - int(t * 0.12)),
+                         (cx + int(t * 0.14), cabeza.bottom - int(t * 0.12)), g)
+    elif nombre == "perfil":
+        pygame.draw.circle(screen, color, (cx, cy - int(t * 0.14)), int(t * 0.2))
+        hombros = pygame.Rect(0, 0, int(t * 0.7), int(t * 0.44))
+        hombros.midtop = (cx, cy + int(t * 0.1))
+        pygame.draw.ellipse(screen, color, hombros)
+        pygame.draw.rect(screen, oscuro, (cx - int(t * 0.4), cy + int(t * 0.34), int(t * 0.8), int(t * 0.2)))
+        # Antifaz: no es quien dice ser.
+        antifaz = pygame.Rect(0, 0, int(t * 0.42), max(3, int(t * 0.1)))
+        antifaz.center = (cx, cy - int(t * 0.16))
+        pygame.draw.rect(screen, oscuro, antifaz, border_radius=3)
+    elif nombre == "tutorial":
+        alto = int(t * 0.56)
+        for lado in (-1, 1):
+            hoja = [(cx, cy - alto // 2 + 4), (cx + lado * int(t * 0.42), cy - alto // 2),
+                    (cx + lado * int(t * 0.42), cy + alto // 2), (cx, cy + alto // 2 + 4)]
+            pygame.draw.polygon(screen, color, hoja)
+            for k in range(3):
+                y = cy - alto // 2 + 8 + k * alto // 4
+                pygame.draw.line(screen, oscuro, (cx + lado * int(t * 0.08), y + 1),
+                                 (cx + lado * int(t * 0.34), y), max(1, g // 2))
+    elif nombre == "cambiaformas":
+        r = int(t * 0.4)
+        cara = pygame.Rect(0, 0, r * 2, int(r * 2.2))
+        cara.center = (cx, cy)
+        mitad = pygame.Surface(cara.size, pygame.SRCALPHA)
+        pygame.draw.ellipse(mitad, (232, 196, 160), mitad.get_rect())
+        pygame.draw.rect(mitad, (0, 0, 0, 0), (cara.width // 2, 0, cara.width, cara.height))
+        verde = pygame.Surface(cara.size, pygame.SRCALPHA)
+        pygame.draw.ellipse(verde, (110, 200, 130), verde.get_rect())
+        pygame.draw.rect(verde, (0, 0, 0, 0), (0, 0, cara.width // 2, cara.height))
+        screen.blit(mitad, cara.topleft)
+        screen.blit(verde, cara.topleft)
+        pygame.draw.ellipse(screen, color, cara, g)
+        pygame.draw.line(screen, color, (cx, cara.y + 2), (cx, cara.bottom - 2), max(1, g // 2))
+        pygame.draw.circle(screen, (40, 30, 30), (cx - int(r * 0.42), cy - int(r * 0.15)), max(2, r // 6))
+        ojo = pygame.Rect(0, 0, int(r * 0.6), int(r * 0.36))
+        ojo.center = (cx + int(r * 0.42), cy - int(r * 0.15))
+        pygame.draw.ellipse(screen, (20, 20, 20), ojo)
+        pygame.draw.ellipse(screen, (255, 220, 80), ojo.inflate(-ojo.width // 2, -2))
+        pygame.draw.arc(screen, (60, 40, 40), (cx - int(r * 0.7), cy + int(r * 0.2), int(r * 0.6), int(r * 0.5)),
+                        math.pi * 1.1, math.pi * 1.9, max(1, g // 2))
+        pygame.draw.line(screen, (30, 70, 40), (cx + int(r * 0.15), cy + int(r * 0.5)),
+                         (cx + int(r * 0.7), cy + int(r * 0.42)), max(1, g // 2))
+    elif nombre == "salir":
+        puerta = pygame.Rect(0, 0, int(t * 0.42), int(t * 0.7))
+        puerta.midright = (cx + int(t * 0.1), cy)
+        pygame.draw.rect(screen, color, puerta, g)
+        pygame.draw.line(screen, color, (cx - int(t * 0.05), cy), (cx + int(t * 0.42), cy), g)
+        pygame.draw.polygon(screen, color, [(cx + int(t * 0.46), cy), (cx + int(t * 0.3), cy - int(t * 0.14)),
+                                            (cx + int(t * 0.3), cy + int(t * 0.14))])
+    else:
+        pygame.draw.circle(screen, color, (cx, cy), int(t * 0.38), g)
+        f = fuente_de_tamano(max(9, int(t * 0.5)))
+        img = f.render("i", True, color)
+        screen.blit(img, img.get_rect(center=(cx, cy)))
+
+
+def render_mosaico(screen, vista, jugador):
+    """La Terminal NEXUS como mosaico: la confianza arriba, el caso del
+    Cambiaformas resaltado a lo ancho, los temas en mosaicos con su icono y
+    Salir abajo. Las filas vienen del panel (`filas`), que es lo mismo que usa
+    el cursor para moverse (app.mover_en_mosaico)."""
+    panel = jugador.panel
+    opciones = panel.get("opciones", [])
+    filas = panel.get("filas") or [[i] for i in range(len(opciones))]
+    tiempo = pygame.time.get_ticks()
+    ancho = min(int(vista.width * 0.94), 800)
+    alto = min(vista.height - 24, int(ancho * 0.86))
+    caja = pygame.Rect(0, 0, ancho, alto)
+    caja.center = vista.center
+    m = max(10, ancho // 40)
+    fondo = pygame.Surface(caja.size, pygame.SRCALPHA)
+    fondo.fill((18, 19, 36, 244))
+    screen.blit(fondo, caja.topleft)
+    pygame.draw.rect(screen, COLOR_NEXUS, caja, 3, border_radius=10)
+    clip_previo = screen.get_clip()
+    screen.set_clip(caja)
+
+    # Encabezado: el logo de la red y el título.
+    f_tit = fuente_de_tamano(max(13, min(24, ancho // 30)))
+    f_peq = fuente_de_tamano(max(10, min(15, ancho // 52)))
+    y = caja.y + m
+    logo = (caja.x + m + 10, y + f_tit.get_linesize() // 2)
+    for dx, dy in ((-7, 5), (7, 5), (0, -7)):
+        pygame.draw.line(screen, COLOR_NEXUS, logo, (logo[0] + dx, logo[1] + dy), 2)
+        pygame.draw.circle(screen, COLOR_NEXUS, (logo[0] + dx, logo[1] + dy), 3)
+    pygame.draw.circle(screen, (255, 255, 255), logo, 3)
+    screen.blit(f_tit.render(panel.get("titulo", "NEXUS"), True, COLOR_TEXTO), (caja.x + m + 26, y))
+    y += f_tit.get_linesize() + 6
+
+    # La barra de confianza (verde: en ustedes; roja: en los aliens).
+    confianza = panel.get("confianza")
+    if confianza is not None:
+        verde, rojo, umbral = confianza
+        barra = pygame.Rect(caja.x + m, y, ancho - 2 * m, max(8, ancho // 70))
+        pygame.draw.rect(screen, (60, 62, 84), barra, border_radius=4)
+        if verde > 0:
+            pygame.draw.rect(screen, (96, 200, 120), (barra.x, barra.y, int(barra.width * verde), barra.height),
+                             border_radius=4)
+        if rojo > 0:
+            w = int(barra.width * rojo)
+            pygame.draw.rect(screen, (236, 80, 70), (barra.right - w, barra.y, w, barra.height), border_radius=4)
+        x_umbral = barra.x + int(barra.width * umbral)
+        pygame.draw.line(screen, (255, 255, 255), (x_umbral, barra.y - 3), (x_umbral, barra.bottom + 3), 2)
+        y = barra.bottom + 3
+        izq = f_peq.render(f"Confían en ustedes: {int(verde * 100)}%", True, (120, 220, 140))
+        der = f_peq.render(f"En los aliens: {int(rojo * 100)}%", True, (245, 130, 120))
+        screen.blit(izq, (barra.x, y))
+        screen.blit(der, (barra.right - der.get_width(), y))
+        planos = f_peq.render(f"planos al {int(umbral * 100)}%", True, COLOR_TENUE)
+        if x_umbral - planos.get_width() // 2 > barra.x + izq.get_width() + 8 and \
+                x_umbral + planos.get_width() // 2 < barra.right - der.get_width() - 8:
+            screen.blit(planos, (x_umbral - planos.get_width() // 2, y))
+        y += f_peq.get_linesize() + 2
+    for parrafo in panel.get("cuerpo", []):
+        for linea in partir_lineas(parrafo, f_peq, ancho - 2 * m)[:2]:
+            screen.blit(f_peq.render(linea, True, COLOR_TENUE), (caja.x + m, y))
+            y += f_peq.get_linesize()
+    y += 6
+
+    # Los mosaicos.
+    pie = panel.get("pie")
+    alto_pie = f_peq.get_linesize() + 8 if pie else 0
+    disponible = caja.bottom - m - alto_pie - y
+    pesos = []
+    for fila in filas:
+        if any(opciones[i].get("destacada") for i in fila):
+            pesos.append(1.25)
+        elif all(opciones[i].get("icono") == "salir" for i in fila):
+            pesos.append(0.5)
+        else:
+            pesos.append(1.0)
+    hueco = max(6, m // 2)
+    unidad = (disponible - hueco * (len(filas) - 1)) / max(0.1, sum(pesos))
+    for fila, peso in zip(filas, pesos):
+        alto_fila = int(unidad * peso)
+        ancho_mosaico = (ancho - 2 * m - hueco * (len(fila) - 1)) / len(fila)
+        for k, i in enumerate(fila):
+            opcion = opciones[i]
+            rect = pygame.Rect(int(caja.x + m + k * (ancho_mosaico + hueco)), int(y), int(ancho_mosaico), alto_fila)
+            _dibujar_mosaico(screen, rect, opcion, i == jugador.cursor, tiempo)
+        y += alto_fila + hueco
+
+    if pie:
+        img = f_peq.render(pie, True, COLOR_TENUE)
+        screen.blit(img, (caja.centerx - img.get_width() // 2, caja.bottom - m - img.get_height()))
+    screen.set_clip(clip_previo)
+
+
+def _dibujar_mosaico(screen, rect, opcion, elegido, tiempo):
+    icono = opcion.get("icono", "info")
+    destacada = opcion.get("destacada", False)
+    radio = max(6, rect.height // 8)
+    if destacada:
+        # El caso del Cambiaformas: fondo magenta y un borde que late.
+        latido = 0.5 + 0.5 * math.sin(tiempo / 330)
+        pygame.draw.rect(screen, (70, 28, 76) if not elegido else (96, 40, 104), rect, border_radius=radio)
+        brillo = tuple(int(c * (0.65 + 0.35 * latido)) for c in COLOR_CASO)
+        pygame.draw.rect(screen, COLOR_SELECCION if elegido else brillo, rect, 3, border_radius=radio)
+        if elegido:
+            pygame.draw.rect(screen, COLOR_CASO, rect.inflate(6, 6), 2, border_radius=radio + 3)
+        tam = min(rect.height * 0.78, rect.width * 0.2)
+        icono_nexus(screen, icono, (rect.x + 10 + tam / 2 + 4, rect.centery), tam, COLOR_CASO)
+        x = int(rect.x + 22 + tam)
+        ancho_texto = rect.right - x - 12
+        f, lineas = _ajustar(opcion["texto"], ancho_texto, rect.height * 0.5, max(12, min(26, rect.height // 3)), 2)
+        f_det = fuente_de_tamano(max(10, f.get_height() * 2 // 3))
+        etiqueta = f_det.render("IMPORTANTE", True, (255, 255, 255))
+        insignia = etiqueta.get_rect().inflate(10, 4)
+        insignia.topright = (rect.right - 10, rect.y + 8)
+        alto_texto = len(lineas) * f.get_linesize() + (f_det.get_linesize() if opcion.get("detalle") else 0)
+        ty = rect.centery - alto_texto // 2
+        for linea in lineas:
+            screen.blit(f.render(linea, True, COLOR_SELECCION if elegido else COLOR_TEXTO), (x, ty))
+            ty += f.get_linesize()
+        if opcion.get("detalle"):
+            screen.blit(f_det.render(opcion["detalle"], True, (250, 190, 235)), (x, ty))
+        if insignia.left > x + f.size(lineas[0])[0] + 8 or insignia.bottom < rect.centery - alto_texto // 2:
+            pygame.draw.rect(screen, COLOR_CASO, insignia, border_radius=4)
+            screen.blit(etiqueta, etiqueta.get_rect(center=insignia.center))
+        return
+    salir = icono == "salir"
+    pygame.draw.rect(screen, COLOR_MOSAICO_SEL if elegido else (COLOR_MOSAICO if not salir else (26, 28, 46)),
+                     rect, border_radius=radio)
+    pygame.draw.rect(screen, COLOR_SELECCION if elegido else (78, 84, 130), rect, 3 if elegido else 1,
+                     border_radius=radio)
+    color = COLOR_SELECCION if elegido else (COLOR_TENUE if salir else COLOR_NEXUS)
+    if salir or rect.height < 70:
+        # Bajito: el icono a la izquierda y el texto al lado.
+        tam = rect.height * 0.62
+        f, lineas = _ajustar(opcion["texto"], rect.width - tam - 30, rect.height - 6,
+                             max(11, min(20, rect.height // 2)), 2)
+        alto_texto = len(lineas) * f.get_linesize()
+        total = tam + 10 + max(f.size(l)[0] for l in lineas)
+        x0 = rect.centerx - total / 2
+        icono_nexus(screen, icono, (x0 + tam / 2, rect.centery), tam, color)
+        ty = rect.centery - alto_texto // 2
+        for linea in lineas:
+            screen.blit(f.render(linea, True, COLOR_SELECCION if elegido else COLOR_TEXTO), (x0 + tam + 10, ty))
+            ty += f.get_linesize()
+        return
+    # Alto: el icono arriba en un círculo y el texto abajo, centrado.
+    tam = min(rect.height * 0.42, rect.width * 0.42)
+    centro_icono = (rect.centerx, rect.y + 8 + tam * 0.62)
+    pygame.draw.circle(screen, (24, 26, 48), (int(centro_icono[0]), int(centro_icono[1])), int(tam * 0.62))
+    icono_nexus(screen, icono, centro_icono, tam * 0.9, color)
+    arriba = int(centro_icono[1] + tam * 0.62 + 4)
+    f, lineas = _ajustar(opcion["texto"], rect.width - 14, rect.bottom - arriba - 4,
+                         max(11, min(19, rect.width // 11)), 3)
+    _texto_centrado(screen, lineas, f, rect.centerx, arriba, COLOR_SELECCION if elegido else COLOR_TEXTO)
 
 
 COLOR_SALA = (150, 205, 255)
@@ -417,21 +710,30 @@ def _dibujar_corazon(screen, centro, tamano, color):
     ])
 
 
-def render_pulso(screen, vista, jugador):
-    """Corazón que late al ritmo del pulso y la barra, abajo a la izquierda."""
+def _medidas_pulso(screen, vista):
     f = _fuente_para(vista)
-    color = _color_pulso(jugador.pulso)
-    golpe = _intensidad_latido(jugador.fase_latido)
-
     ancho_barra = max(110, min(200, vista.width // 5))
     alto_barra = max(10, f.get_linesize() // 2)
     x = vista.x + 16
     base = vista.bottom - 16
     if vista.bottom >= screen.get_height() - 2:
         base -= 26   # deja libre la pista de teclas de abajo de la pantalla
-
     fondo = pygame.Rect(x - 8, base - alto_barra - f.get_linesize() - 18,
                         ancho_barra + 64, alto_barra + f.get_linesize() + 26)
+    return f, ancho_barra, alto_barra, x, base, fondo
+
+
+def rect_pulso(screen, vista):
+    """Dónde va el recuadro del pulso (para poner cosas justo encima: el mapa
+    del Tecnomante, roles.render_minimapa)."""
+    return _medidas_pulso(screen, vista)[5]
+
+
+def render_pulso(screen, vista, jugador):
+    """Corazón que late al ritmo del pulso y la barra, abajo a la izquierda."""
+    color = _color_pulso(jugador.pulso)
+    golpe = _intensidad_latido(jugador.fase_latido)
+    f, ancho_barra, alto_barra, x, base, fondo = _medidas_pulso(screen, vista)
     capa = pygame.Surface(fondo.size, pygame.SRCALPHA)
     capa.fill((14, 15, 28, 205))
     screen.blit(capa, fondo.topleft)
@@ -644,7 +946,7 @@ def render_vidas(screen, vista, jugador, tapado=None):
     y = rect.centery
     parpadeo = getattr(jugador, "vida_cambio_ms", 0) > 0 and (pygame.time.get_ticks() // 120) % 2
     if getattr(jugador, "vidas_infinitas", False):
-        # Tutorial: no se pierden vidas. Un corazón (parpadea si te atrapan) y ∞.
+        # Fácil: no se pierden vidas. Un corazón (parpadea si te atrapan) y ∞.
         dibujar_corazon(screen, (x, y), tam, True, (255, 240, 240) if parpadeo else COLOR_VIDA)
         dibujar_infinito(screen, (x + tam // 2 + 8 + ancho_infinito(tam) // 2, y), tam,
                          (255, 230, 235))
@@ -710,25 +1012,69 @@ def _icono_objeto(screen, tipo, centro, tam):
         pygame.draw.circle(screen, color, (cx, cy), int(tam * 0.3))
         pygame.draw.circle(screen, (40, 30, 10), (cx, cy), max(2, tam // 8))
     elif tipo == "decodificador":
+        # Un aparatito de mano: antena con luz, pantalla con código y botones.
         color = COLOR_CONSUMIBLE["decodificador"]
-        chip = pygame.Rect(0, 0, int(tam * 0.6), int(tam * 0.6))
-        chip.center = centro
-        for i in range(3):
-            x = chip.x + 3 + i * (chip.width - 6) // 2
-            pygame.draw.line(screen, color, (x, chip.y - 4), (x, chip.bottom + 3), 2)
-            y = chip.y + 3 + i * (chip.height - 6) // 2
-            pygame.draw.line(screen, color, (chip.x - 4, y), (chip.right + 3, y), 2)
-        pygame.draw.rect(screen, (24, 30, 50), chip)
-        pygame.draw.rect(screen, color, chip, 2)
+        t = max(14, tam)
+        cuerpo = pygame.Rect(0, 0, int(t * 0.52), int(t * 0.74))
+        cuerpo.center = (cx, cy + int(t * 0.06))
+        antena = (cuerpo.right - int(t * 0.12), cuerpo.y)
+        pygame.draw.line(screen, (150, 160, 190), antena, (antena[0] + int(t * 0.06), cuerpo.y - int(t * 0.2)), 2)
+        luz = (255, 90, 90) if (pygame.time.get_ticks() // 400) % 2 else (120, 40, 40)
+        pygame.draw.circle(screen, luz, (antena[0] + int(t * 0.06), cuerpo.y - int(t * 0.22)), max(2, t // 14))
+        pygame.draw.rect(screen, (26, 34, 58), cuerpo, border_radius=max(3, t // 9))
+        pygame.draw.rect(screen, color, cuerpo, 2, border_radius=max(3, t // 9))
+        pantalla = pygame.Rect(0, 0, cuerpo.width - int(t * 0.14), int(t * 0.3))
+        pantalla.midtop = (cx, cuerpo.y + int(t * 0.08))
+        pygame.draw.rect(screen, (10, 40, 30), pantalla, border_radius=2)
+        for k in range(3):     # líneas de "código" que corren
+            largo = int(pantalla.width * (0.35 + 0.5 * ((k * 37 + pygame.time.get_ticks() // 250) % 7) / 7))
+            y = pantalla.y + 3 + k * max(2, (pantalla.height - 5) // 3)
+            pygame.draw.line(screen, (90, 240, 150), (pantalla.x + 3, y), (pantalla.x + 3 + largo - 6, y), 1)
+        for k, col in enumerate(((240, 90, 90), (250, 210, 80), (90, 200, 255))):
+            pygame.draw.circle(screen, col, (cuerpo.x + int(cuerpo.width * (k + 1) / 4),
+                                             cuerpo.bottom - int(t * 0.15)), max(2, t // 15))
     elif tipo == "kit":
+        # Caja de herramientas verde con asa, cierre y una llave inglesa asomándose.
         color = COLOR_CONSUMIBLE["kit"]
-        caja = pygame.Rect(0, 0, int(tam * 0.8), int(tam * 0.55))
-        caja.midbottom = (cx, cy + tam // 3)
-        pygame.draw.rect(screen, color, caja, border_radius=3)
-        asa = pygame.Rect(0, 0, int(tam * 0.36), int(tam * 0.3))
-        asa.midbottom = (cx, caja.y + 2)
-        pygame.draw.rect(screen, color, asa, 2, border_radius=3)
-        pygame.draw.line(screen, (30, 60, 40), (caja.x + 3, caja.centery), (caja.right - 4, caja.centery), 2)
+        oscuro = (40, 92, 60)
+        t = max(14, tam)
+        caja = pygame.Rect(0, 0, int(t * 0.86), int(t * 0.5))
+        caja.midbottom = (cx, cy + int(t * 0.34))
+        # La llave, detrás de la tapa.
+        llave_a = (caja.x + int(t * 0.18), caja.y + 2)
+        llave_b = (caja.x + int(t * 0.4), caja.y - int(t * 0.3))
+        pygame.draw.line(screen, (190, 196, 210), llave_a, llave_b, max(3, t // 9))
+        pygame.draw.circle(screen, (190, 196, 210), llave_b, max(3, t // 8))
+        pygame.draw.circle(screen, (26, 30, 44), (llave_b[0] + 2, llave_b[1] - 2), max(1, t // 16))
+        asa = pygame.Rect(0, 0, int(t * 0.4), int(t * 0.26))
+        asa.midbottom = (cx + int(t * 0.1), caja.y + 3)
+        pygame.draw.rect(screen, (150, 156, 170), asa, max(2, t // 14), border_radius=4)
+        pygame.draw.rect(screen, color, caja, border_radius=4)
+        tapa = pygame.Rect(caja.x, caja.y, caja.width, int(caja.height * 0.36))
+        pygame.draw.rect(screen, (140, 230, 165), tapa, border_top_left_radius=4, border_top_right_radius=4)
+        pygame.draw.line(screen, oscuro, (caja.x, tapa.bottom), (caja.right - 1, tapa.bottom), 2)
+        pygame.draw.rect(screen, oscuro, caja, 2, border_radius=4)
+        cierre = pygame.Rect(0, 0, max(4, int(t * 0.16)), max(4, int(t * 0.14)))
+        cierre.center = (caja.centerx, tapa.bottom)
+        pygame.draw.rect(screen, (250, 210, 80), cierre, border_radius=2)
+        pygame.draw.rect(screen, (120, 90, 20), cierre, 1, border_radius=2)
+    elif tipo == "fruta":
+        color = COLOR_CONSUMIBLE["fruta"]
+        r = max(4, int(tam * 0.32))
+        pygame.draw.circle(screen, color, (cx, cy + 2), r)
+        pygame.draw.circle(screen, (255, 170, 140), (cx - r // 3, cy - r // 3 + 2), max(1, r // 3))
+        pygame.draw.line(screen, (90, 60, 30), (cx, cy - r + 2), (cx + 2, cy - r - 4), 2)
+        hoja = pygame.Rect(0, 0, max(4, r), max(3, r // 2))
+        hoja.midleft = (cx + 2, cy - r - 2)
+        pygame.draw.ellipse(screen, (100, 190, 80), hoja)
+    elif tipo == "abono":
+        color = COLOR_CONSUMIBLE["abono"]
+        saco = pygame.Rect(0, 0, int(tam * 0.6), int(tam * 0.66))
+        saco.center = (cx, cy + 2)
+        pygame.draw.rect(screen, color, saco, border_radius=6)
+        pygame.draw.rect(screen, (90, 60, 34), saco, 2, border_radius=6)
+        pygame.draw.line(screen, (90, 60, 34), (saco.x + 4, saco.y + 5), (saco.right - 4, saco.y + 5), 2)
+        pygame.draw.circle(screen, (100, 190, 80), (cx, cy + 4), max(2, tam // 9))
     elif tipo.startswith("prueba_"):
         from screens.infiltrado_dibujo import icono_prueba
         icono_prueba(screen, tipo, centro, tam)
@@ -737,6 +1083,8 @@ def _icono_objeto(screen, tipo, centro, tam):
 NOMBRE_OBJETO = {"pieza": ("Pieza", "Piezas"),
                  "decodificador": ("Decodificador", "Decodificadores"),
                  "kit": ("Kit de herramientas", "Kits de herramientas"),
+                 "fruta": ("Fruta (para el Guardia)", "Frutas"),
+                 "abono": ("Abono (para la planta)", "Abonos"),
                  # Las pruebas del infiltrado (data/infiltrado.py).
                  "prueba_audio": ("Audio interceptado", "Audios interceptados"),
                  "prueba_expediente": ("Expediente", "Expedientes"),
@@ -752,13 +1100,17 @@ def render_inventario(screen, vista, jugador):
     if getattr(jugador, "piezas", 0) > 0:
         objetos.append(("pieza", jugador.piezas))
     inventario = getattr(jugador, "objetos", {})
-    for tipo in ("decodificador", "kit", "prueba_audio", "prueba_expediente", "prueba_captura"):
+    for tipo in ("decodificador", "kit", "fruta", "abono",
+                 "prueba_audio", "prueba_expediente", "prueba_captura"):
         cantidad = inventario.get(tipo, 0) if hasattr(inventario, "get") else int(tipo in inventario)
         if cantidad > 0:
             objetos.append((tipo, cantidad))
     f = fuente_de_tamano(max(11, min(15, vista.width // 60)))
     tam = max(18, min(26, vista.width // 40))
-    titulo = f.render("Inventario", True, COLOR_TENUE)
+    texto_titulo = "Inventario"
+    if objetos and hasattr(jugador, "nombre_tecla"):
+        texto_titulo += f"  [{jugador.nombre_tecla('soltar')}] soltar"
+    titulo = f.render(texto_titulo, True, COLOR_TENUE)
     textos = [f.render(f"x{n} {NOMBRE_OBJETO[t][n > 1]}", True, COLOR_TEXTO) for t, n in objetos]
     ancho = max([titulo.get_width()] + [tam + 8 + t.get_width() for t in textos] + [80]) + 16
     fila = max(tam, f.get_linesize()) + 4

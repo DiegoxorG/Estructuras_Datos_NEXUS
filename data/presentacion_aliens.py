@@ -1,4 +1,4 @@
-"""Lo que dice la ventana que presenta a cada tipo de alien (modo Tutorial).
+"""Lo que dice la ventana que presenta a cada tipo de alien (dificultad Fácil).
 
 La primera vez que un tipo de alien aparece en la pantalla de alguien, el
 juego se pausa y una ventana lo señala y explica cómo funciona
@@ -8,14 +8,6 @@ juego se pausa y una ventana lo señala y explica cómo funciona
 """
 
 PRESENTACION = {
-    "rastreador": {
-        "titulo": "Rastreador",
-        "lineas": [
-            "Ve y oye normal: es el alien de siempre.",
-            "Lo que tiene enfrente lo ve (su cono de luz). Si tu anillo de ruido lo toca, te oye.",
-            "Muévete por donde no mira y camina en sigilo ({sigilo}) cuando esté cerca.",
-        ],
-    },
     "vigia": {
         "titulo": "Vigía",
         "lineas": [
@@ -39,6 +31,26 @@ PRESENTACION = {
             "Pero se cansa: después de perseguirte un rato se detiene a recuperar el aliento.",
             "Si te ve, no corras en línea recta: dobla esquinas, escóndete ({interactuar}) o "
             "aguanta hasta que se canse.",
+        ],
+    },
+    "sombra": {
+        "titulo": "La Sombra",
+        "lineas": [
+            "Solo sale cuando se va la luz. A oscuras solo le ves los ojos.",
+            "Mientras una linterna la alumbra no se puede mover: mírala. Si le das la "
+            "espalda, se acerca en silencio (apenas un susurro).",
+            "Si te alcanza te apaga la linterna (si la nave se pone en Pesadilla, hasta que vuelva la luz). Prendan la caja de "
+            "fusibles y desaparece; en un escondite tampoco te encuentra.",
+        ],
+    },
+    "guardia": {
+        "titulo": "El Guardia",
+        "lineas": [
+            "Es enorme y protege la cápsula. No sale de la Bahía, pero ahí ve a todo el que entre.",
+            "El Resonante lo puede distraer un rato con su Sintonía ({interactuar} cerca de él): "
+            "reparen rápido y salgan.",
+            "Para quitarlo para siempre: el Biomante hace crecer la planta de la Biosfera "
+            "(sin Biomante, con abono) y le llevan la fruta.",
         ],
     },
     "cambiaformas": {

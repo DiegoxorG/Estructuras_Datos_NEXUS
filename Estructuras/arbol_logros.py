@@ -27,8 +27,10 @@ Las cinco preguntas que plantea el laboratorio:
    cuelga un logro nuevo de cualquier nodo. No se eliminan nodos: lo que
    cambia es su estado. Al conseguir un logro se **sube por los padres hasta
    la raíz** (`camino_a_la_raiz`) marcando los que falten, para que el árbol
-   nunca tenga un hijo obtenido con el padre sin obtener. Cada partida empieza
-   con un árbol nuevo (`reiniciar`).
+   nunca tenga un hijo obtenido con el padre sin obtener (salvo un padre
+   "compuesto", que dice "cualquiera de los de abajo", quedan marcados "por el
+   camino"). Cada partida empieza con un árbol nuevo (`reiniciar`). El orden
+   de data/logros.py está pensado para que eso casi nunca pase.
 
 5) ¿Cómo se realiza su recorrido?
    - **Por niveles (BFS con una cola)** para contar y listar por profundidad.
@@ -57,6 +59,7 @@ class ArbolLogros:
     def construir_desde_dict(self, datos, padre=None, rama=""):
         rama = datos.get("rama", rama)
         nodo = NodoLogro(datos["clave"], datos["nombre"], datos["descripcion"], rama, padre)
+        nodo.compuesto = bool(datos.get("compuesto", False))
         if nodo.clave in self.indice:
             raise ValueError(f"logro repetido: {nodo.clave}")
         self.indice[nodo.clave] = nodo
@@ -80,6 +83,17 @@ class ArbolLogros:
     def buscar(self, clave):
         return self.indice.get(clave)
 
+    def falta_un_padre(self, clave):
+        """¿Le falta algún antecesor (que no sea compuesto) para conseguirlo
+        "en orden"?"""
+        nodo = self.buscar(clave)
+        padre = nodo.padre if nodo is not None else None
+        while padre is not None:
+            if not padre.obtenido and not padre.compuesto:
+                return True
+            padre = padre.padre
+        return False
+
     def camino_a_la_raiz(self, nodo):
         """[nodo, padre, abuelo, ..., raíz]"""
         camino = []
@@ -98,7 +112,7 @@ class ArbolLogros:
         for i, n in enumerate(self.camino_a_la_raiz(nodo)):
             if n.obtenido:
                 break
-            n.obtenido, n.quien, n.por_camino = True, quien, i > 0
+            n.obtenido, n.quien, n.por_camino = True, quien, i > 0 and not n.compuesto
             nuevos.append(n)
         return list(reversed(nuevos))
 

@@ -122,7 +122,6 @@ NIVELES_DESMENTIDO = 6          # hasta cuántos saltos puede llegar un desmenti
 NIVELES_COMPARTIR_CIERTO = 1
 
 UMBRAL_PLANOS = 0.80            # % de prisioneros verdes para los planos
-UMBRAL_DERROTA_ROJO = 0.9       # % de rojos: los aliens toman NEXUS
 
 # Mientras el rojo le va ganando al verde, los aliens se potencian. Con el rojo
 # DIFERENCIA_POTENCIA_MAX por encima del verde llegan al máximo.

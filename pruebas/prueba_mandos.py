@@ -86,7 +86,8 @@ g.current_screen = "partida"
 j3 = g.jugadores[2]
 assert j3.con_mando and j3.puede_moverse and j3.nombre_tecla("interactuar") == "A"
 assert not g.jugadores[2 - 1].con_mando
-g.tutorial.activo = False; g._terminar_tutorial()
+g.saltar_tutorial()
+g.presentacion = None   # la ventana de alien nuevo pausaría la prueba
 for a in g.aliens:
     a.descanso_ms = 10 ** 9
 print("selección: el mando escoge rol; el jugador 3 se puede mover")
@@ -139,4 +140,95 @@ g.mandos.por_puesto = {}
 g._sincronizar_mandos()
 assert not j3.puede_moverse
 print("desconectado: el jugador 3 deja de moverse")
+
+# ---------- Cada uno escoge su control (pantalla "controles") ----------
+# Dos jugadores, los dos con mando: el jugador 1 toma el Mando 2 y el 2 el Mando 1.
+from data.dificultad import DIFICULTADES
+uno, dos = MandoFalso(77), MandoFalso(88)
+for m in (uno, dos):
+    m.ejes[M.EJE_LT] = -1.0
+g = App.Game()
+g.mandos.por_puesto = {2: uno, 3: dos}
+
+
+def boton_de(ident, nombre):
+    return pygame.event.Event(pygame.JOYBUTTONDOWN, instance_id=ident, button=M.BOTONES[nombre], joy=0)
+
+
+def pulsar(*eventos):
+    for e in eventos:
+        pygame.event.post(e)
+    g._manejar_eventos()
+    avanzar()
+
+
+g._activar_opcion_menu("jugar"); avanzar()
+g.cantidad_seleccionada = 0; pulsar(boton_de(77, "A"))            # 2 jugadores
+g.dificultad_seleccionada = [d["clave"] for d in DIFICULTADES].index("normal")
+pulsar(boton_de(77, "A"))
+assert g.current_screen == "controles" and g.esquemas == [None, None], (g.current_screen, g.esquemas)
+pulsar(boton_de(88, "A"))                                        # jugador 1 -> Mando 2
+assert g.esquemas == [3, None]
+g._dibujar()
+pygame.image.save(g.screen, os.path.join(OUT, "controles_eleccion.png"))
+pulsar(boton_de(88, "A"))                                        # otra vez: lo suelta
+assert g.esquemas == [None, None]
+pulsar(boton_de(88, "A"))
+pulsar(boton_de(88, "B"))                                        # B también lo suelta
+assert g.esquemas == [None, None]
+g._manejar_tecla(pygame.K_RETURN); avanzar()                     # jugador 1 -> flechas
+assert g.esquemas == [1, None]
+g._manejar_tecla(pygame.K_RETURN); avanzar()                     # flechas otra vez: las suelta
+assert g.esquemas == [None, None]
+pulsar(boton_de(88, "A"))                                        # jugador 1 -> Mando 2
+pulsar(boton_de(77, "A"))                                        # jugador 2 -> Mando 1
+assert g.esquemas == [3, 2] and g.current_screen == "roles", (g.esquemas, g.current_screen)
+assert [e["controles"] for e in g.seleccion_roles] == ["Mando 2", "Mando 1"]
+g._manejar_tecla(pygame.K_ESCAPE); avanzar()                     # Esc en roles: a escoger controles otra vez
+assert g.current_screen == "controles"
+pulsar(boton_de(88, "A")); pulsar(boton_de(77, "A"))
+assert g.esquemas == [3, 2] and g.current_screen == "roles"
+print("controles: cada uno toma el suyo con su botón; dos no pueden tener el mismo")
+# En la selección de rol, E y Enter ya no le escogen a nadie; los mandos sí.
+g._manejar_tecla(pygame.K_e); g._manejar_tecla(pygame.K_RETURN)
+assert not any(e["listo"] for e in g.seleccion_roles)
+g.seleccion_roles[0]["cursor"] = 0; g.seleccion_roles[1]["cursor"] = 1
+pulsar(boton_de(88, "A"))
+assert g.seleccion_roles[0]["listo"] and not g.seleccion_roles[1]["listo"]
+pulsar(boton_de(77, "A"))
+avanzar()
+assert g.jugadores and [j.esquema for j in g.jugadores] == [3, 2]
+j1, j2 = g.jugadores
+assert j1.con_mando and j1.puede_moverse and j1.controles_nombre == "Mando 2"
+g.current_screen = "partida"
+g.saltar_tutorial()
+g.presentacion = None   # la ventana de alien nuevo pausaría la prueba
+for a in g.aliens:
+    a.descanso_ms = 10 ** 9
+# El stick del Mando 2 mueve al jugador 1; WASD ya no.
+x0 = j1.hitbox.x
+dos.ejes[M.EJE_X] = 1.0
+for _ in range(15):
+    g._actualizar_partida(DT)
+dos.ejes[M.EJE_X] = 0.0
+assert j1.hitbox.x > x0, "el Mando 2 mueve al jugador 1"
+x1, x2 = j1.hitbox.x, j2.hitbox.x
+pygame.key.get_pressed = lambda: Teclas({pygame.K_d: True})
+for _ in range(15):
+    g._actualizar_partida(DT)
+pygame.key.get_pressed = lambda: Teclas()
+assert j1.hitbox.x == x1 and j2.hitbox.x == x2, "WASD no mueve a nadie"
+# B del Mando 1 suelta/cierra cosas del jugador 2 (no del 1).
+pygame.event.post(boton_de(77, "Y"))
+g._manejar_eventos()
+assert j2.panel is not None and j1.panel is None
+print("partida: el jugador 1 se mueve con el Mando 2, el 2 con el Mando 1; WASD no hace nada")
+
+# Sin mandos no hay pantalla de controles: cada uno con el de su puesto.
+g = App.Game()
+g.mandos.por_puesto = {}
+g.cantidad_jugadores = 2
+g.confirmar_dificultad(); avanzar()
+assert g.current_screen == "roles" and g.esquemas == [0, 1]
+print("sin mandos: directo a escoger rol (WASD y flechas, como antes)")
 print("\nTODO OK")

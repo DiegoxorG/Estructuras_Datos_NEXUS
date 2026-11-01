@@ -321,28 +321,78 @@ def lineas_estado(juego):
     return lineas
 
 
+# El dibujito de cada tema en el mosaico de la terminal (screens/paneles.py).
+ICONO_TEMA = [("celular", "celular"), ("rumor", "lupa"), ("ubicaci", "ubicacion"),
+              ("cuentas", "bot"), ("perfiles", "perfil")]
+
+
+def _icono_de(titulo):
+    t = titulo.lower()
+    return next((icono for clave, icono in ICONO_TEMA if clave in t), "info")
+
+
+def _detalle_caso(juego, jugador):
+    """La línea de abajo del mosaico del Cambiaformas: cómo va el caso."""
+    caso = juego.infiltrado
+    from data.infiltrado import PRUEBAS
+    if not caso.pruebas:
+        return "La red está tranquila... por ahora"
+    if not caso.activo:
+        return "Caso cerrado: lo expusieron" if caso.estado == "expuesto" else "Caso cerrado: falló la acusación"
+    mias = len(caso.pruebas_de(jugador))
+    texto = f"Pruebas subidas: {len(caso.subidas)}/{len(PRUEBAS)}"
+    if mias:
+        texto += f"  ·  ¡llevas {mias} para subir!"
+    return texto
+
+
 def panel_ayuda(juego, jugador, zona=None):
-    """Menú de la central de ayuda de una Terminal NEXUS."""
-    from data.nexus import AYUDA_TEMAS
-    opciones = [(titulo, ("tema", i)) for i, (titulo, _) in enumerate(AYUDA_TEMAS)]
-    opciones.append(("Repasar el tutorial", ("tutorial", None)))
+    """Menú de la central de ayuda de una Terminal NEXUS: un mosaico con
+    iconos. El caso del Cambiaformas (si hay) va arriba, resaltado y a todo lo
+    ancho; debajo, los temas de a tres; abajo, Salir."""
+    from data.nexus import AYUDA_TEMAS, UMBRAL_PLANOS
+    opciones, acciones = [], []
+
+    def agregar(opcion, accion):
+        opciones.append(opcion)
+        acciones.append(accion)
+        return len(opciones) - 1
+
+    filas = []
     if getattr(juego, "infiltrado", None) is not None:
-        opciones.append(("El caso del Cambiaformas", ("infiltrado", None)))
-    opciones.append(("Salir", ("salir", None)))
-    cuerpo = lineas_estado(juego)
+        filas.append([agregar({"texto": "El caso del Cambiaformas", "icono": "cambiaformas",
+                               "destacada": True, "detalle": _detalle_caso(juego, jugador)},
+                              ("infiltrado", None))])
+    mosaicos = [agregar({"texto": titulo, "icono": _icono_de(titulo)}, ("tema", i))
+                for i, (titulo, _) in enumerate(AYUDA_TEMAS)]
+    mosaicos.append(agregar({"texto": "Repasar el tutorial", "icono": "tutorial"}, ("tutorial", None)))
+    filas += [mosaicos[k:k + 3] for k in range(0, len(mosaicos), 3)]
+    filas.append([agregar({"texto": "Salir", "icono": "salir"}, ("salir", None))])
+
+    cuerpo = lineas_estado(juego)[1:] if juego.nexus is not None else lineas_estado(juego)
     if juego.mision is not None and juego.mision.activa and juego.mision.objetivo():
-        cuerpo += ["", "Ahora: " + juego.mision.objetivo()]
-    return {"tipo": "opciones", "accion": "ayuda_menu", "zona": zona,
+        cuerpo += ["Ahora: " + juego.mision.objetivo()]
+    red = juego.nexus
+    confianza = None
+    if red is not None:
+        verde, rojo = red.barras()
+        confianza = (verde, rojo, getattr(red, "umbral_planos", UMBRAL_PLANOS))
+    mover = jugador.pista_mover()
+    if "/" in mover:      # WASD: también izquierda y derecha
+        mover = "".join(jugador.nombre_tecla(t) for t in ("arriba", "izquierda", "abajo", "derecha"))
+    pie = (f"[{mover}] elegir   [{jugador.nombre_tecla('interactuar')}] abrir   "
+           f"[{jugador.nombre_tecla('celular')}] salir")
+    return {"tipo": "opciones", "accion": "ayuda_menu", "zona": zona, "nexus_terminal": True,
+            "mosaico": True, "filas": filas, "confianza": confianza,
             "titulo": "NEXUS · Central de ayuda", "cuerpo": cuerpo,
-            "opciones": [{"texto": t} for t, _ in opciones],
-            "acciones": [a for _, a in opciones], "pie": _pie(jugador)}
+            "opciones": opciones, "acciones": acciones, "pie": pie}
 
 
 def _panel_tema(jugador, titulo, parrafos, zona):
     cuerpo = []
     for p in parrafos:
         cuerpo += [p, ""]
-    return {"tipo": "opciones", "accion": "ayuda_tema", "zona": zona,
+    return {"tipo": "opciones", "accion": "ayuda_tema", "zona": zona, "nexus_terminal": True,
             "titulo": titulo, "cuerpo": cuerpo[:-1],
             "opciones": [{"texto": "Volver"}], "pie": _pie(jugador)}
 

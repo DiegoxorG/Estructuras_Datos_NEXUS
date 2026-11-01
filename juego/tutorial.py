@@ -18,7 +18,7 @@ mientras espera a los demás.
 
 MS_SIGILO_NECESARIO = 700
 
-# {mover}, {sigilo}, {interactuar}, {habilidad}, {habilidades}, {celular} y {vidas} se cambian por
+# {mover}, {sigilo}, {interactuar}, {habilidad}, {habilidades}, {celular}, {soltar} y {vidas} se cambian por
 # las teclas de cada jugador. "accion" dice si además se completa haciéndolo.
 PASOS = [
     {"texto": "Muévete con {mover}.", "accion": "mover"},
@@ -37,11 +37,13 @@ PASOS = [
     {"texto": "Por la nave caminan otros prisioneros. Uno es el Cambiaformas disfrazado: "
               "no habla y su nombre falla. Si te ve solo, se revela. ¡No te alejes de tu equipo!",
      "accion": "leer"},
-    {"texto": "{interactuar}: usar, leer notas y esconderte. Si te atrapan vas a una "
-              "celda y tus compañeros te sacan. Tienes {vidas}.", "accion": "leer"},
+    {"texto": "{interactuar}: usar, leer notas y esconderte. {soltar}: dejar algo del "
+              "inventario en el piso. Si te atrapan vas a una celda y tus compañeros te sacan. "
+              "Tienes {vidas}.", "accion": "leer"},
     {"texto": "{interactuar} junto a un prisionero: \"¿vienes conmigo?\". Los verdes te "
-              "siguen; llévalos a la cápsula y contarán en NEXUS que los salvaste. Si uno "
-              "acepta sin decir nada y se te pega demasiado... desconfía.", "accion": "leer"},
+              "siguen; llévalos a la cápsula y contarán en NEXUS que los salvaste ({interactuar} "
+              "otra vez junto a él: que te espere). Si uno acepta sin decir nada y se te pega "
+              "demasiado... desconfía.", "accion": "leer"},
     {"texto": "{habilidad}: usar tu habilidad.  {habilidades}: árbol de habilidades. "
               "¡Escapen juntos!", "accion": "leer"},
 ]
@@ -49,7 +51,8 @@ PASOS = [
 
 def con_teclas(texto, jugador):
     """Cambia {mover}, {sigilo}... por las teclas de ese jugador."""
-    mover = "WASD" if jugador.puesto == 0 else "las flechas" if jugador.puesto == 1 \
+    esquema = getattr(jugador, "esquema", jugador.puesto)
+    mover = "WASD" if esquema == 0 else "las flechas" if esquema == 1 \
         else "el stick" if getattr(jugador, "con_mando", False) else jugador.controles_nombre
     return texto.format(
         mover=mover, sigilo=jugador.nombre_tecla("sigilo"),
@@ -57,6 +60,7 @@ def con_teclas(texto, jugador):
         habilidad=jugador.nombre_tecla("habilidad"),
         habilidades=jugador.nombre_tecla("habilidades"),
         celular=jugador.nombre_tecla("celular"),
+        soltar=jugador.nombre_tecla("soltar"),
         vidas=_vidas_texto(jugador))
 
 

@@ -54,7 +54,7 @@ assert (tec.rol, forj.rol) == ("Tecnomante", "Forjador")
 assert tec.nombre_personaje == "Tecnomante", "cada rol usa sus propios sprites"
 print("jugadores:", [(j.rol, j.controles_nombre) for j in g.jugadores])
 print("zonas:", [(z["clave"], z["tipo"]) for z in g.zonas])
-g.tutorial.activo = False; g._terminar_tutorial()
+g.saltar_tutorial()
 for a in g.aliens:
     a.descanso_ms = 10 ** 9
 

@@ -24,8 +24,11 @@ DURACION_AVISO_EN_COLA_MS = 2000     # si hay varios esperando, pasan más rápi
 MS_PASOS_DE_GATO = 30000
 DISTANCIA_SHHH = 100
 DISTANCIA_VER_ALIEN = 450
+DISTANCIA_OJOS = 600          # a esta distancia se le ven los ojos a la Sombra
 MS_ELECTRICISTA = 30000
-FASES_CON_SOMBRA = ("prision", "sabotaje", "capsula")
+FASES_SIN_RASTRO = ("sabotaje", "capsula")
+MS_SIGILOSO = 3000            # caminar en sigilo este rato (o esconderse) abre la rama
+ESPERA_PADRE_MS = 2500        # un hijo que llega antes que su padre espera esto
 
 
 def logro(juego, clave, jugador=None):
@@ -55,17 +58,42 @@ class GestorLogros:
         self.apagon_ms = 0
         self.tipos_vistos = set()
         self.cansados = set()            # id de los aliens que están cansados ahora
+        # Un logro que llega antes que su padre (casi siempre en el mismo
+        # instante) espera un momento a que llegue el padre: [clave, rol, ms].
+        self.pendientes = []
 
     # -- Conseguir -----------------------------------------------------------------------
 
-    def conseguir(self, clave, jugador=None):
+    def conseguir(self, clave, jugador=None, esperar=True):
         quien = getattr(jugador, "rol", None) if jugador is not None else None
+        nodo = self.arbol.buscar(clave)
+        if nodo is None or nodo.obtenido:
+            return []
+        if esperar and self.arbol.falta_un_padre(clave):
+            if all(p[0] != clave for p in self.pendientes):
+                self.pendientes.append([clave, quien, ESPERA_PADRE_MS])
+            return []
+        return self._dar(clave, quien)
+
+    def _dar(self, clave, quien):
         nuevos = self.arbol.conseguir(clave, quien)
         for nodo in nuevos:
             self.avisos.append([nodo, DURACION_AVISO_MS])
         if nuevos and hasattr(self.juego, "sonar"):
             self.juego.sonar("logro", 0.6)
         return nuevos
+
+    def _pendientes(self, dt, todos=False):
+        """Da los que ya tienen a su padre; los que esperaron demasiado (o
+        `todos`, al terminar la partida), igual, marcando el camino."""
+        for pendiente in list(self.pendientes):
+            clave, quien, _ = pendiente
+            pendiente[2] -= dt
+            if self.tiene(clave):
+                self.pendientes.remove(pendiente)
+            elif todos or pendiente[2] <= 0 or not self.arbol.falta_un_padre(clave):
+                self.pendientes.remove(pendiente)
+                self._dar(clave, quien)
 
     def tiene(self, clave):
         nodo = self.arbol.buscar(clave)
@@ -87,6 +115,7 @@ class GestorLogros:
             self.conseguir("todos_a_bordo")
         if self.capturas_total == 0:
             self.conseguir("nadie_me_vio")
+        self._pendientes(0, todos=True)
 
     # -- Cada frame ----------------------------------------------------------------------
 
@@ -102,10 +131,12 @@ class GestorLogros:
         if getattr(juego, "en_tutorial", False):
             return
         self.conseguir("despertar")
+        self._pendientes(dt)
         self._mision()
         self._luz(dt)
         self._jugadores(dt)
         self._aliens()
+        self._sombra()
 
     def _mision(self):
         mision = getattr(self.juego, "mision", None)
@@ -118,10 +149,10 @@ class GestorLogros:
             if quien is not None and getattr(mision, "codigos_fallidos", 0) == 0:
                 self.conseguir("a_la_primera", quien)
         if self.fase is not None and mision.fase != self.fase:
-            if self.capturas_fase == 0 and self.fase in FASES_CON_SOMBRA:
-                self.conseguir("sombra")
             if self.fase == "sabotaje":
                 self.conseguir("sin_rumbo")
+            if self.capturas_fase == 0 and self.fase in FASES_SIN_RASTRO:
+                self.conseguir("sin_rastro")
             self.capturas_fase = 0
         self.fase = mision.fase
         from misiones.mision import PIEZAS_NECESARIAS
@@ -133,6 +164,8 @@ class GestorLogros:
         if eventos is None:
             return
         if eventos.apagon:
+            if not self.apagon:
+                self.conseguir("a_oscuras")
             self.apagon = True
             self.apagon_ms += dt
         elif self.apagon:
@@ -142,16 +175,29 @@ class GestorLogros:
             if self.apagon_ms < MS_ELECTRICISTA:
                 self.conseguir("electricista", quien)
             self.apagon_ms = 0
+            # La Sombra en ese apagón (Game._actualizar_sombra lo anota al
+            # sacarla): ¿quien prendió la caja la tenía cerca? ¿alcanzó a alguien?
+            info = getattr(self.juego, "sombra_al_volver_la_luz", None)
+            if info:
+                if info.get("cerca"):
+                    self.conseguir("luz_salvadora", quien)
+                if not info.get("alcanzo"):
+                    self.conseguir("sin_miedo", quien)
+                self.juego.sombra_al_volver_la_luz = None
 
     def _jugadores(self, dt):
         aliens = getattr(self.juego, "aliens", ())
         for jugador in self.juego.jugadores:
+            if jugador.escondido and not jugador.eliminado and jugador.preso is None:
+                self.conseguir("sigiloso", jugador)
             if jugador.eliminado or jugador.preso is not None or jugador.escondido:
                 continue
             camina_en_sigilo = jugador.sigilo and jugador.personaje.moviendose
             if camina_en_sigilo:
                 ms = self.sigilo_ms.get(id(jugador), 0) + dt
                 self.sigilo_ms[id(jugador)] = ms
+                if ms >= MS_SIGILOSO:
+                    self.conseguir("sigiloso", jugador)
                 if ms >= MS_PASOS_DE_GATO:
                     self.conseguir("pasos_de_gato", jugador)
             centro = jugador.hitbox.center
@@ -159,20 +205,46 @@ class GestorLogros:
                 d = _distancia(alien.centro, centro)
                 # El Cambiaformas cuenta cuando se le ve como es (disfrazado
                 # es un prisionero más).
-                if d <= DISTANCIA_VER_ALIEN and not getattr(alien, "disfrazado", False):
+                # A la Sombra, alumbrada (a oscuras solo se le ven los ojos).
+                if (d <= DISTANCIA_VER_ALIEN and not getattr(alien, "disfrazado", False)
+                        and getattr(alien, "se_ve", True)):
                     self.tipos_vistos.add(alien.tipo)
+                    self.conseguir("primer_encuentro", jugador)
+                    if alien.tipo == "cambiaformas":
+                        self.conseguir("cara_a_cara", jugador)
                 if (alien.tipo == "ciego" and d <= DISTANCIA_SHHH and camina_en_sigilo
                         and alien.objetivo is None
                         and alien.accion not in ("PERSEGUIR", "ATRAPAR", "REVISAR_ESCONDITE",
                                                  "DESCANSAR")):
                     self.conseguir("shhh", jugador)
-        # Todos los tipos que hay en la partida, el Cambiaformas incluido.
+        # Todos los tipos que hay en la partida, el Cambiaformas y la Sombra
+        # incluidos (la Sombra solo está en `aliens` en los apagones).
         tipos = {a.tipo for a in aliens}
-        cambiaformas = getattr(self.juego, "cambiaformas", None)
-        if cambiaformas is not None:
-            tipos.add(cambiaformas.tipo)
+        for unico in (getattr(self.juego, "cambiaformas", None), getattr(self.juego, "sombra", None)):
+            if unico is not None:
+                tipos.add(unico.tipo)
         if len(tipos) >= 2 and tipos <= self.tipos_vistos:
             self.conseguir("conoce_a_tu_enemigo")
+
+    def _sombra(self):
+        """"Ojos en la oscuridad": alguien tiene a la Sombra en su campo de
+        visión (a oscuras se le ven los ojos). "No parpadees" lo avisa
+        sombra.py; "Luz salvadora" y "Sin miedo" se dan en `_luz`."""
+        juego = self.juego
+        sombra = getattr(juego, "sombra", None)
+        if sombra is None or sombra not in getattr(juego, "aliens", ()) or sombra.oculta \
+                or self.tiene("ojos_en_la_oscuridad"):
+            return
+        from juego import vision
+        obstaculos = vision.obstaculos(juego.mundo, getattr(juego, "puertas_dobles", ()),
+                                       getattr(juego, "compuertas", ()))
+        for jugador in juego.jugadores:
+            if (jugador.preso is not None or jugador.escondido or getattr(jugador, "eliminado", False)
+                    or _distancia(jugador.hitbox.center, sombra.centro) > DISTANCIA_OJOS):
+                continue
+            if vision.campo_de(jugador.hitbox.center, obstaculos).ve_a(sombra.hitbox):
+                self.conseguir("ojos_en_la_oscuridad", jugador)
+                return
 
     def _aliens(self):
         juego = self.juego

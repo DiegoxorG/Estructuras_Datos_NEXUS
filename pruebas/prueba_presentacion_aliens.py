@@ -1,8 +1,8 @@
-"""Prueba de la ventana que presenta a cada tipo de alien (modo Tutorial).
+"""Prueba de la ventana que presenta a cada tipo de alien (en todas las dificultades).
 
     python pruebas/prueba_presentacion_aliens.py
 
-1. Solo en la dificultad Tutorial.
+1. En todas las dificultades (sin dificultad, en las pruebas, no).
 2. Un alien que entra en la pantalla (y en el campo de visión) de alguien abre
    la ventana: el juego queda en pausa hasta que se cierra (no antes de
    MIN_ABIERTA_MS, por si alguien venía apretando una tecla).
@@ -47,7 +47,7 @@ def nueva_partida(dificultad):
     g._manejar_tecla(pygame.K_RETURN); avanzar()
     g.seleccion_roles[0]["cursor"] = 0; g._manejar_tecla(pygame.K_e)
     g.seleccion_roles[1]["cursor"] = 1; g._manejar_tecla(pygame.K_RETURN); avanzar()
-    g.tutorial.activo = False; g._terminar_tutorial()
+    g.saltar_tutorial()
     return g
 
 
@@ -72,12 +72,15 @@ def lejos_de_todos(g, menos=()):
             a.descanso_ms = 10 ** 9
 
 
-# ---------- 1: solo en Tutorial ----------
-g = nueva_partida("normal")
-assert g.presentacion is None
-print("Normal: sin ventanas de presentación")
+# ---------- 1: en todas las dificultades ----------
+from juego.dificultad import Dificultad
+assert all(presentacion_aliens.activa_en(Dificultad(d["clave"])) for d in DIFICULTADES)
+assert not presentacion_aliens.activa_en(None)
+g = nueva_partida("dificil")
+assert g.presentacion is not None
+print("la ventana de alien nuevo sale en Fácil, Normal, Difícil e Inteligente")
 
-g = nueva_partida("tutorial")
+g = nueva_partida("facil")
 P = g.presentacion
 assert P is not None and not P.abierta
 j1, j2 = g.jugadores
@@ -148,4 +151,38 @@ for _ in range(presentacion_aliens.MIN_ABIERTA_MS // DT + 1):
 g._tecla_mando(2, "interactuar")
 assert not P.abierta
 print("se cierra con el mando")
+
+# ---------- 6: escondido también se presenta (pero no en pleno minijuego) ----------
+g = nueva_partida("facil")
+P = g.presentacion
+j1, j2 = g.jugadores
+vigia = next(a for a in g.aliens if a.tipo == "vigia")
+lejos_de_todos(g, menos=(vigia,))
+vigia.descanso_ms = 10 ** 9          # que no lo oiga ni se mueva
+for a in g.aliens:
+    a.descanso_ms = 10 ** 9
+
+
+def a_la_vista_de_un_escondite():
+    for e in g.escondites:
+        j1.esconderse(e)
+        for dx in range(-300, 301, 30):
+            for dy in range(-220, 221, 30):
+                vigia.hitbox.center = (e["rect"].centerx + dx, e["rect"].centery + dy)
+                if (math.hypot(dx, dy) > 150 and not g.mundo.colisiona(vigia.hitbox)
+                        and P.ve_en_pantalla(j1, vigia)):
+                    return e
+        j1.salir_del_escondite()
+    raise AssertionError("no encontré un escondite con el Vigía a la vista")
+
+
+e = a_la_vista_de_un_escondite()
+j1.minijuego = object()               # en pleno minijuego: no
+for _ in range(3):
+    P.revisar()
+assert not P.abierta
+j1.minijuego = None
+P.revisar()
+assert P.abierta and P.actual["jugador"] is j1 and P.actual["tipo"] == "vigia"
+print("escondido, el alien nuevo también se presenta (salvo en pleno minijuego)")
 print("\nTODO OK")

@@ -141,7 +141,8 @@ def dibujar(screen, vista, camara, dueño, jugadores, apagon=False, vision=None)
 
     # El cono de la linterna: capas del más ancho y oscuro al más angosto y
     # claro. Cada capa es un poco más corta, así también se apaga hacia la punta.
-    if apagon and dueño.preso is None and not dueño.escondido:
+    if (apagon and dueño.preso is None and not dueño.escondido
+            and getattr(dueño, "sin_linterna_ms", 0) <= 0):    # (la Sombra se la apagó)
         cx, cy = local(dueño.hitbox.center)
         angulo = getattr(getattr(dueño, "linterna", None), "angulo", math.pi / 2)
         alcance = ALCANCE_LINTERNA / e

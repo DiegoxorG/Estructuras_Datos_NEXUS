@@ -4,7 +4,7 @@
     python pruebas/simulador.py 30           (30 partidas)
     python pruebas/simulador.py 5 Biomante Resonante
     python pruebas/simulador.py 3 --desde 10   (partidas 10, 11 y 12)
-    python pruebas/simulador.py 6 --dificultad facil   (tutorial, facil, normal, dificil, inteligente)
+    python pruebas/simulador.py 6 --dificultad facil   (facil, normal, dificil, inteligente)
 
 Sirve para dos cosas:
 - **Encontrar bugs**: si algo revienta, si un bot se queda trabado (no puede
@@ -298,9 +298,9 @@ class Bot:
             return self._piezas_o_esperar()
         if m.fase == "capsula":
             faltan = PIEZAS_NECESARIAS - m.piezas_entregadas
-            if faltan > 0:
-                return self._piezas_o_esperar(entregar=True)
             puede = j.rol == "Forjador" or "kit" in j.objetos
+            if faltan > 0 and (puede or not m.falta_forjador or m.kit_libre() is None):
+                return self._piezas_o_esperar(entregar=True)
             if not puede and m.falta_forjador:
                 cons = next((c for c in m.consumibles if not c["tomado"] and c["tipo"] == "kit"), None)
                 if cons is not None and not any("kit" in b.objetos for b in g.jugadores):
@@ -320,7 +320,7 @@ class Bot:
 
     def _piezas_o_esperar(self, entregar=False):
         g, j, m = self.g, self.j, self.g.mision
-        recoge = j.rol == "Forjador" or m.piezas_para_todos
+        recoge = m.ve_piezas(j)
         faltan = PIEZAS_NECESARIAS - m.piezas_entregadas - sum(b.piezas for b in g.jugadores)
         if recoge and faltan > 0:
             libres = [p for p in g.piezas if not p["recogida"]]
@@ -516,7 +516,7 @@ if __name__ == "__main__":
         for (f, t0), (_, t1) in zip(fases, fases[1:]):
             duraciones[f].append(t1 - t0)
         print(f"\n#{i} {roles[0]}+{roles[1]}: {s['resultado'].upper()} en {s['duracion_s']:.0f} s "
-              f"(reloj {s['reloj_restante_s']} s) | capturas {s['capturas']} {dict(s['atrapado_por'])} "
+              f"| capturas {s['capturas']} {dict(s['atrapado_por'])} "
               f"| puntos {s['puntos']} | sim {time.perf_counter() - inicio:.0f} s")
         print("   fases:", {k: round(v) for k, v in s["fases"].items()}, "| eventos:", s["eventos"])
         if s["sin_camino"]:

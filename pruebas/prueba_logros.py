@@ -35,7 +35,7 @@ nodos = arbol.preorden()
 assert len(nodos) == arbol.total() == len(arbol.indice)
 assert all(n.rama in COLOR_RAMA for n in nodos)
 niveles = arbol.por_niveles()
-assert niveles[0] == [arbol.raiz] and len(niveles[1]) == 7
+assert niveles[0] == [arbol.raiz] and len(niveles[1]) == 8
 assert sum(len(n) for n in niveles) == arbol.total()
 print(f"{arbol.total()} logros, {len(niveles)} niveles, ramas: {[n.nombre for n in niveles[1]]}")
 
@@ -195,9 +195,14 @@ assert g.pausa is None
 print("pausa > Logros: el árbol se recorre con las flechas (izq: padre, der: hijo) y el mouse")
 
 # Escapar: los de la rama escape y los de terminar.
+# (Sin apagar las consolas: "Chatarrero" llega antes que su padre "Sin
+# rumbo". Espera un momento a que llegue; como no llega, se da igual y marca
+# el camino.)
 g.mision.piezas_entregadas = 3
 frames(g, 1)
-assert L.tiene("chatarrero") and L.tiene("sin_rumbo")
+assert not L.tiene("chatarrero") and L.pendientes, "un hijo antes que su padre espera"
+frames(g, 160)
+assert L.tiene("chatarrero") and L.tiene("sin_rumbo") and L.arbol.buscar("sin_rumbo").por_camino
 g.mision.resultado = "victoria"
 L.capturas_total = 0
 g.terminar_ronda()
@@ -239,10 +244,10 @@ g2 = nueva_partida()
 assert g2.logros.arbol.obtenidos() == 0
 print("partida nueva: logros en 0")
 
-# "Conoce a tu enemigo": todos los tipos, el Cambiaformas incluido (y a él
-# hay que verlo como es: disfrazado no cuenta).
+# "Conoce a tu enemigo": todos los tipos, el Cambiaformas y la Sombra
+# incluidos (al Cambiaformas hay que verlo como es: disfrazado no cuenta).
 L2 = g2.logros
-L2.juego.tutorial.activo = False; g2._terminar_tutorial()
+g2.saltar_tutorial()
 cf = g2.cambiaformas
 assert cf is not None and cf.disfrazado
 L2.tipos_vistos = {a.tipo for a in g2.aliens if a is not cf}
@@ -251,6 +256,39 @@ L2.actualizar(DT)
 assert not L2.tiene("conoce_a_tu_enemigo"), "faltaba ver al Cambiaformas como es"
 cf.disfrazado = False
 L2.actualizar(DT)
+assert not L2.tiene("conoce_a_tu_enemigo"), "falta la Sombra (aunque no haya apagón)"
+L2.tipos_vistos.add("sombra")
+L2.actualizar(DT)
 assert L2.tiene("conoce_a_tu_enemigo")
-print("'Conoce a tu enemigo' pide también al Cambiaformas (revelado)")
+print("'Conoce a tu enemigo' pide también al Cambiaformas (revelado) y a la Sombra")
+# Menú > Logros: el árbol completo, con los que salieron alguna vez
+# (juego/historial_logros.py; aquí con un archivo de prueba).
+import tempfile
+from juego import historial_logros
+ruta = os.path.join(tempfile.mkdtemp(), "logros.json")
+historial_logros.agregar(["despertar", "sigiloso", "pasos_de_gato"], ruta=ruta)
+historial_logros.agregar(["despertar"], ruta=ruta)
+assert historial_logros.cargar(ruta) == {"despertar": 2, "sigiloso": 1, "pasos_de_gato": 1}
+assert historial_logros.cargar(ruta + ".no_existe") == {}
+cargar = historial_logros.cargar
+historial_logros.cargar = lambda: cargar(ruta)
+g3 = App.Game()
+assert ("Logros", "logros") in [(b.text, b.action) for b in g3.menu_buttons]
+g3._activar_opcion_menu("logros")
+for _ in range(80):
+    if g3.transitions.is_idle(): break
+    g3.transitions.update(g3, 33)
+assert g3.current_screen == "logros"
+A = g3.catalogo_logros
+assert A.obtenidos() == 3 and A.buscar("pasos_de_gato").obtenido and not A.buscar("libertad").obtenido
+g3._manejar_tecla(pygame.K_RIGHT)
+assert g3.catalogo_nodo is A.raiz.hijos[0]
+g3._dibujar(); pygame.image.save(g3.screen, os.path.join(OUT, "logros_f_menu.png"))
+g3._manejar_tecla(pygame.K_ESCAPE)
+for _ in range(80):
+    if g3.transitions.is_idle(): break
+    g3.transitions.update(g3, 33)
+assert g3.current_screen == "menu"
+historial_logros.cargar = cargar
+print("menú > Logros: todos los logros, con los conseguidos alguna vez")
 print("\nTODO OK")

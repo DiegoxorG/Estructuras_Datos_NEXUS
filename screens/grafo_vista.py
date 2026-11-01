@@ -29,6 +29,7 @@ import random
 
 import pygame
 
+from juego import salas_selladas
 from juego.fuentes import fuente_de_tamano
 from screens.paneles import partir_lineas
 
@@ -271,9 +272,9 @@ def render_grafo_nave(screen, mundo, aliens=(), npcs=(), jugadores=()):
     origen = (area.x + (area.width - tam[0]) // 2, area.y + (area.height - tam[1]) // 2)
     nav = navegacion.de_mundo(mundo, 34, 20)
 
-    clave = (id(mundo), tam)
+    clave = (id(mundo), tam, id(nav))
     if clave not in _mapa_chico:
-        img = pygame.transform.smoothscale(mundo.imagen, tam)
+        img = salas_selladas.oscurecer_miniatura(pygame.transform.smoothscale(mundo.imagen, tam), mundo)
         oscuro = pygame.Surface(tam)
         oscuro.fill((95, 95, 110))
         img.blit(oscuro, (0, 0), special_flags=pygame.BLEND_RGB_MULT)

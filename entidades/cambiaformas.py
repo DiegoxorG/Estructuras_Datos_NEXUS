@@ -118,7 +118,7 @@ class Cambiaformas(Alien):
     # -- Lo que ven los demás -------------------------------------------------------
 
     def _ajuste(self, nombre, por_defecto):
-        """Lo que dice la dificultad (dificultad.py); sin ella, como Difícil."""
+        """Lo que dice la dificultad (dificultad.py); sin ella, los números base."""
         return dificultad.valor(self.juego, nombre, por_defecto)
 
     def _calma_tras_cazar(self):
@@ -310,7 +310,9 @@ class Cambiaformas(Alien):
         self._susurrar(dt)
         if self._manada_ahora:
             self.manada_ms += dt
-            if self.manada_ms >= MANADA_MS:
+            # Solo si ya lo vieron como es: antes, nadie sabe que "no se atrevió".
+            logros = getattr(self.juego, "logros", None)
+            if self.manada_ms >= MANADA_MS and logros is not None and logros.tiene("cara_a_cara"):
                 logro(self.juego, "en_manada")
         self.trampa_ms -= dt
         if self.trampa_ms <= 0:
@@ -417,6 +419,7 @@ class Cambiaformas(Alien):
                 # Se le acabó la carrera: huye y vuelve a intentarlo después.
                 self.rafaga_ms = 0
                 if presa is not None and not presa.preso:
+                    logro(self.juego, "cara_a_cara", presa)      # (se le reveló enfrente)
                     logro(self.juego, "sobreviviente", presa)
                 # Falló: ahora la presa lo conoce a él. Tiene que volver a
                 # estudiarla y deja pasar un rato antes de intentarlo.
@@ -605,6 +608,7 @@ class Cambiaformas(Alien):
     def desenmascarar(self):
         """Reportaron su suplantación en NEXUS: pierde el disfraz y huye."""
         if self.siguiendo is not None:
+            logro(self.juego, "cara_a_cara", self.siguiendo)    # (lo tenía al lado)
             logro(self.juego, "lobo_con_piel_de_oveja", self.siguiendo)
             self.siguiendo = None
         self.disfrazado = False
@@ -692,6 +696,8 @@ class Cambiaformas(Alien):
 
     def aturdir(self, ms):
         """Hackeo: lo aturde, le quita el disfraz y al despertar huye."""
+        if self.siguiendo is not None:
+            logro(self.juego, "cara_a_cara", self.siguiendo)    # (lo tenía al lado)
         if self.disfrazado:
             logro(self.juego, "no_me_enganas")
         if self.siguiendo is not None:

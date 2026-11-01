@@ -19,8 +19,10 @@ from juego import oscuridad
 from juego import vision
 from screens.infiltrado_dibujo import dibujar_pruebas
 from misiones import puertas
-from misiones.eventos import dibujar_cajas, dibujar_brillo_caja
-from screens.paneles import (render_panel, render_hud, render_mensaje, render_pista_zona,
+from misiones.eventos import dibujar_cajas, dibujar_brillo_caja, dibujar_flecha_caja
+from screens import flechas
+from juego import salas_selladas
+from screens.paneles import (render_panel, render_mosaico, render_hud, render_mensaje, render_pista_zona,
                              render_pulso, render_tension, render_minijuego,
                              render_escondido, render_vidas, render_eliminado,
                              render_inventario)
@@ -119,6 +121,8 @@ def render_partida(screen, mundo, jugadores, zonas=(), segundos_restantes=None,
             render_mapa_emision(screen, vista, jugador, mundo)
         elif jugador.panel is not None and jugador.panel.get("tipo") == "celular":
             pass    # el celular va al final, encima del inventario y del pulso
+        elif jugador.panel is not None and jugador.panel.get("mosaico"):
+            pass    # la Terminal NEXUS va encima de todo (render_terminales_encima)
         else:
             render_panel(screen, vista, jugador)
         render_mensaje(screen, vista, jugador, tapado)
@@ -140,6 +144,19 @@ def render_partida(screen, mundo, jugadores, zonas=(), segundos_restantes=None,
                   dibujo_celular.desplazamiento_avisos(screen, len(jugadores), extras.get("nexus")))
     if mostrar_hitboxes:
         _dibujar_leyenda(screen, mundo, jugadores)
+
+
+def render_terminales_encima(screen, jugadores):
+    """La Terminal NEXUS (un mosaico que ocupa casi toda la vista) se dibuja
+    al final, encima de la barra de confianza y del cartel de la IA, que si no
+    le tapaban la parte de arriba."""
+    viewports = calcular_viewports(*screen.get_size(), len(jugadores))
+    for vista, jugador in zip(viewports, jugadores):
+        if jugador.panel is not None and jugador.panel.get("mosaico"):
+            clip_previo = screen.get_clip()
+            screen.set_clip(vista)
+            render_mosaico(screen, vista, jugador)
+            screen.set_clip(clip_previo)
 
 
 def _dibujar_leyenda(screen, mundo, jugadores):
@@ -185,6 +202,9 @@ def _dibujar_vista(screen, vista, mundo, jugadores, dueño, zonas, mostrar_hitbo
     if camara.height > mundo.alto:
         destino[1] += (camara.height - mundo.alto) // 2
     screen.blit(mundo.imagen, destino, area=camara)
+    # Las salas selladas (menos jugadores, mapa más chico): oscuras y con
+    # franjas de peligro en la entrada.
+    salas_selladas.dibujar(screen, (camara.x - destino[0], camara.y - destino[1]), camara, mundo)
 
     if mostrar_hitboxes:
         # Hitboxes del fondo: paredes y zonas interactuables del mapa.
@@ -215,6 +235,8 @@ def _dibujar_vista(screen, vista, mundo, jugadores, dueño, zonas, mostrar_hitbo
     tiempo_ms = pygame.time.get_ticks()
     if extras:
         mision_dibujo.dibujar_piso(screen, offset, camara, dueño, extras.get("mision"), tiempo_ms)
+        if extras.get("guardia_planta") is not None:
+            extras["guardia_planta"].dibujar_planta(screen, offset, camara, tiempo_ms)
         dibujo_roles.dibujar_piso(screen, offset, camara, dueño, extras, tiempo_ms)
 
     if extras:
@@ -232,6 +254,7 @@ def _dibujar_vista(screen, vista, mundo, jugadores, dueño, zonas, mostrar_hitbo
     # se ve. Los aliens fuera de su vista no se dibujan (ni cuerpo, ni cono, ni
     # señal); los compañeros sí, oscurecidos como el resto del mapa.
     campo = None
+    todos_los_aliens = list(aliens)      # (los que no ve, la Sintonía los oye: pasos rosados)
     npcs = list((extras or {}).get("npcs", ()))
     if (extras or {}).get("vision") and not mostrar_hitboxes:
         campo = vision.campo_de(dueño.hitbox.center, vision.obstaculos(
@@ -270,12 +293,27 @@ def _dibujar_vista(screen, vista, mundo, jugadores, dueño, zonas, mostrar_hitbo
                           campo.puntos if campo else None)
     if a_oscuras:
         dibujar_brillo_caja(screen, offset, dueño, eventos, tiempo_ms)
+    # Los ojos de la Sombra brillan encima de la oscuridad: a oscuras es lo
+    # único que se le ve (sombra.py).
+    for alien in aliens:
+        ojos = getattr(alien, "dibujar_ojos", None)
+        if ojos is not None:
+            ojos(screen, offset, tiempo_ms)
     _dibujar_ruido(screen, offset, dueño)
+    if extras:
+        # Sintonía (Resonante): los pasos de los aliens que están en su
+        # pantalla pero no ve (detrás de una pared o a oscuras).
+        dibujo_roles.dibujar_pasos(screen, offset, camara, dueño, todos_los_aliens, aliens,
+                                   a_oscuras, tiempo_ms)
 
     if extras:
         mision_dibujo.dibujar_encima(screen, offset, camara, extras.get("mision"), tiempo_ms)
         dibujo_roles.dibujar_encima(screen, offset, camara, dueño, extras, tiempo_ms)
         dibujo_roles.dibujar_flechas(screen, vista, camara, dueño, extras)
+        # La roja primero: en un apagón manda, y las otras se corren si
+        # apuntan casi para el mismo lado (screens/flechas.py).
+        flechas.empezar()
+        dibujar_flecha_caja(screen, vista, camara, dueño, extras.get("eventos"), tiempo_ms)
         dibujo_celular.dibujar_lugar(screen, vista, camara, dueño, extras.get("nexus"), tiempo_ms)
         mision_dibujo.dibujar_flecha_objetivo(screen, vista, camara, dueño, extras.get("mision"),
                                               extras.get("dificultad"), extras.get("nexus"),
@@ -302,9 +340,9 @@ def render_mapa_emision(screen, vista, jugador, mundo):
     disponible = vista.inflate(-margen * 2, -margen * 2 - alto_pie)
     escala = min(disponible.width / mundo.ancho, disponible.height / mundo.alto)
     tam = (max(1, int(mundo.ancho * escala)), max(1, int(mundo.alto * escala)))
-    clave = (id(mundo.imagen), tam)
+    clave = (id(mundo.imagen), tam, salas_selladas.clave_cache(mundo))
     if clave not in _mapas_emision:
-        mini = pygame.transform.smoothscale(mundo.imagen, tam)
+        mini = salas_selladas.oscurecer_miniatura(pygame.transform.smoothscale(mundo.imagen, tam), mundo)
         mini.fill((150, 150, 175), special_flags=pygame.BLEND_RGB_MULT)
         _mapas_emision[clave] = mini
     rect = pygame.Rect(0, 0, *tam)

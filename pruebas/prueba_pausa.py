@@ -41,7 +41,7 @@ g._activar_opcion_menu("jugar"); avanzar(); g.current_screen = "cantidad"
 g._manejar_tecla(pygame.K_RETURN); avanzar(); g.current_screen = "roles"
 g._manejar_tecla(pygame.K_e); g._manejar_tecla(pygame.K_RETURN)
 avanzar(); g.current_screen = "partida"
-g.tutorial.activo = False; g._terminar_tutorial()
+g.saltar_tutorial()
 
 # Esc ya no saca al menú: abre la pausa.
 g._manejar_tecla(pygame.K_ESCAPE)

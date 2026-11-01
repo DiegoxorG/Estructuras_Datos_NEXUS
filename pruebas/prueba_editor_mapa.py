@@ -10,7 +10,7 @@ No toca Hitboxes/Nave_objetos.json ni el mapa activo.
 Guarda una captura en pruebas/capturas/editor_mapa.png.
 """
 
-import os, sys, math
+import os, sys, math, copy
 os.environ["SDL_VIDEODRIVER"] = "dummy"
 os.environ["SDL_AUDIODRIVER"] = "dummy"
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -106,6 +106,58 @@ usar("spawn"); clic(P(768, 700))
 usar("nexus"); clic(P(600, 760))
 assert len(ed.datos["nexus"]) == 1
 print("\ninicio movido y Terminal NEXUS puesta")
+
+# Puertas con código: un clic pone una y los siguientes ponen sus notas de
+# código hasta la X; después, otro clic pone otra puerta (de otro color). Clic
+# en una puerta la elige. Clic derecho borra una nota; en una puerta, la quita
+# con sus notas.
+usar("puertas_codigo")
+clic(P(768, 520))
+assert len(ed.datos["puertas_codigo"]) == 1 and ed.notas_de_puerta and ed.puerta_elegida == 0
+clic(P(620, 700)); clic(P(700, 760))
+assert len(ed.datos["puertas_codigo"][0]["notas"]) == 2 and len(ed.datos["notas"]) == 0
+ed.tecla(pygame.K_x)
+assert not ed.notas_de_puerta
+clic(P(900, 520))                       # sin notas: otra puerta
+assert len(ed.datos["puertas_codigo"]) == 2 and ed.puerta_elegida == 1 and ed.notas_de_puerta
+clic(P(560, 640))
+assert len(ed.datos["puertas_codigo"][1]["notas"]) == 1 and len(ed.datos["puertas_codigo"][0]["notas"]) == 2
+ed.clic_izquierdo(ed.rect_a_pantalla(ed.rect_puerta(0)).center); ed.soltar()     # elige la roja
+assert ed.puerta_elegida == 0 and len(ed.datos["puertas_codigo"]) == 2
+clic(P(660, 640))
+assert len(ed.datos["puertas_codigo"][0]["notas"]) == 3 and len(ed.datos["puertas_codigo"][1]["notas"]) == 1
+ed.clic_izquierdo(en_pantalla(P(560, 640))); ed.arrastrar(en_pantalla(P(570, 660))); ed.soltar()
+assert sum(len(p["notas"]) for p in ed.datos["puertas_codigo"]) == 4, "arrastrar mueve, no pone otra"
+ed.clic_derecho(en_pantalla(P(660, 640)))
+assert len(ed.datos["puertas_codigo"][0]["notas"]) == 2
+# F: las próximas notas de la puerta elegida son "solo Difícil".
+ed.tecla(pygame.K_f)
+assert ed.notas_solo_dificil and ed.notas_de_puerta
+clic(P(700, 600))
+pc = ed.datos["puertas_codigo"]
+assert len(pc[ed.puerta_elegida]["notas_dificil"]) == 1
+ed.clic_izquierdo(en_pantalla(P(700, 600))); ed.arrastrar(en_pantalla(P(710, 610))); ed.soltar()
+assert len(ed.datos["puertas_codigo"][ed.puerta_elegida]["notas_dificil"]) == 1, "arrastrar la mueve"
+ed.tecla(pygame.K_f)
+assert not ed.notas_solo_dificil
+ed.dibujar(); pygame.image.save(ed.screen, os.path.join(OUT, "editor_mapa_notas_codigo.png"))
+ed.clic_derecho(en_pantalla(P(710, 610)))
+assert not any(p["notas_dificil"] for p in ed.datos["puertas_codigo"]), "clic derecho la borra"
+antes = copy.deepcopy(ed.datos["puertas_codigo"])
+ed.clic_derecho(ed.rect_a_pantalla(ed.rect_puerta(1)).center)
+assert len(ed.datos["puertas_codigo"]) == 1 and len(ed.datos["puertas_codigo"][0]["notas"]) == 2
+ed.deshacer_uno()
+assert ed.datos["puertas_codigo"] == antes
+# Se guardan juntas, cada una con sus notas, y el juego las lee igual.
+copia = objetos_mapa.normalizar(copy.deepcopy(ed.datos))
+assert copia["puertas_codigo"] == antes and "puerta" not in copia
+ed.clic_derecho(ed.rect_a_pantalla(ed.rect_puerta(1)).center)
+ed.clic_derecho(ed.rect_a_pantalla(ed.rect_puerta(0)).center)
+assert ed.datos["puertas_codigo"] == []
+# El formato viejo (una sola "puerta") se lee como la primera.
+vieja = objetos_mapa.normalizar({"puerta": {"rx": 0.5, "ry": 0.5, "ancho": 0.02, "alto": 0.07}})
+assert vieja["puertas_codigo"] == [{"rx": 0.5, "ry": 0.5, "ancho": 0.02, "alto": 0.07, "notas": [], "notas_dificil": []}]
+print("puertas con código: varias, cada una con sus notas (clic pone, X termina, clic elige)")
 
 ed.dibujar(); pygame.image.save(ed.screen, os.path.join(OUT, "editor_mapa.png"))
 

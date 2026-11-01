@@ -397,6 +397,13 @@ def poner_emision(juego, jugador, punto=None):
     jugador.cerrar_panel()
     atraidos = [a for a in juego.aliens
                 if _distancia(a.centro, punto) <= RADIO_EMISION and a.oir(punto)]
+    # El Guardia (guardia.py) no va a ver la señal, pero si cae en su sala se
+    # queda escuchándola un rato.
+    from entidades.guardia import DISTRACCION_EMISION_MS
+    for a in juego.aliens:
+        if hasattr(a, "distraer") and a.en_area(punto) and a.distraer(DISTRACCION_EMISION_MS, jugador):
+            atraidos.append(a)
+            jugador.avisar("¡El Guardia se quedó escuchando la señal!", COLOR_AVISO)
     juego.senales.append({"pos": punto, "ms": DURACION_SENAL_MS, "duracion": DURACION_SENAL_MS})
     _sonar(juego, "senal", 0.7)
     if atraidos:
@@ -452,12 +459,17 @@ def actualizar(juego, dt):
             if jugador.efectos[nombre] <= 0:
                 del jugador.efectos[nombre]
 
-        # Ingenio mecánico: el Forjador recoge las piezas al pasar por encima.
+        # Ingenio mecánico: el Forjador recoge las piezas al pasar por encima
+        # (sin Forjador, quien lleve el kit de herramientas: Mision.ve_piezas).
         mision = getattr(juego, "mision", None)
-        para_todos = mision is not None and mision.piezas_para_todos
-        if (jugador.arbol.tiene("INGENIO") or para_todos) and not jugador.escondido \
-                and not jugador.preso:
+        ve = mision.ve_piezas(jugador) if mision is not None else jugador.arbol.tiene("INGENIO")
+        if ve and not jugador.escondido and not jugador.preso:
             for pieza in juego.piezas:
+                if pieza.get("solto") is jugador:
+                    # La acaba de soltar: no la recoge hasta que se mueva de encima.
+                    if not pieza["rect"].colliderect(jugador.hitbox):
+                        pieza["solto"] = None
+                    continue
                 if not pieza["recogida"] and pieza["rect"].colliderect(jugador.hitbox):
                     pieza["recogida"] = True
                     _sonar(juego, "recoger", 0.6)

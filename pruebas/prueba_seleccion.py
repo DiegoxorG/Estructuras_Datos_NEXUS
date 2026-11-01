@@ -90,4 +90,36 @@ for cantidad in (2, 3, 4):
     g.current_screen = "roles"
     g._manejar_tecla(CONFIRMAR[0])
     print("  j1 pulsa de nuevo -> listo:", g.seleccion_roles[0]["listo"], "(debe ser False)")
+# La pantalla de carga: el Cambiaformas persigue a los personajes elegidos.
+from screens.carga import render_carga, precargar
+CARGA = os.path.join(RAIZ, "pruebas", "capturas")
+for roles in (["Tecnomante"], ["Biomante", "Resonante"], ["Forjador", "Resonante", "Tecnomante"],
+              ["Tecnomante", "Resonante", "Biomante", "Forjador"]):
+    for tam in ((1280, 720), (1920, 1080)):
+        lienzo = pygame.Surface(tam)
+        precargar(tam[1], roles)
+        for t in (300, 1200):          # 1200: en pleno salto del Cambiaformas
+            render_carga(lienzo, t, 0.5, "Consejo de prueba para ver cómo queda.", roles)
+            pygame.image.save(lienzo, os.path.join(CARGA, f"carga_{len(roles)}j_{tam[0]}_{t}.png"))
+print("pantalla de carga: el Cambiaformas persigue a 1, 2, 3 y 4 personajes (capturas carga_*)")
+# Al terminar la carga, durante el fundido a la partida, siguen los mismos
+# personajes (antes, esos últimos cuadros salían con el Tecnomante).
+import screens.carga as modulo_carga
+vistos = []
+original = modulo_carga.render_carga
+modulo_carga.render_carga = lambda pantalla, t, p, consejo="", roles=None: vistos.append(roles)
+g = App.Game()
+g.current_screen = "cargando"
+g.carga = {"ms": 0, "listo": True, "error": None, "consejo": "", "roles": ["Biomante", "Resonante"]}
+g._actualizar_carga(g.MIN_CARGA_MS + 10)
+assert g.carga is None, "terminó la carga"
+for _ in range(40):
+    if g.current_screen != "cargando":
+        break
+    g._dibujar()
+    g._actualizar_carga(33)
+    g.transitions.update(g, 33)
+modulo_carga.render_carga = original
+assert vistos and all(r == ["Biomante", "Resonante"] for r in vistos), vistos
+print(f"fin de la carga: {len(vistos)} cuadros del fundido, todos con Biomante y Resonante")
 print("\nTODO OK")

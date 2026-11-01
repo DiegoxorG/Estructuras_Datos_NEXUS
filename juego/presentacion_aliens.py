@@ -1,4 +1,4 @@
-"""Modo Tutorial: la primera vez que se ve cada tipo de alien, se explica.
+"""La primera vez que se ve cada tipo de alien, se explica.
 
 Cuando un tipo de alien que todavía no se presentó entra en la pantalla de un
 jugador (dentro de su cámara y de su campo de visión, como se dibuja en
@@ -12,7 +12,7 @@ El Cambiaformas se presenta cuando ya se reveló y terminó su susto (nunca
 disfrazado: eso arruinaría la sorpresa). Mientras alguien tiene un susto en
 pantalla no se abre ninguna, para que no se tapen.
 
-Solo en la dificultad Tutorial (`activa_en`). La pausa la aplica
+En todas las dificultades (`activa_en`, data/dificultad.PRESENTAR_ALIENS; sin dificultad, en las pruebas, no). La pausa la aplica
 `Game._actualizar_partida`: mientras hay una ventana abierta no se mueve nada.
 """
 
@@ -26,7 +26,7 @@ ALCANCE_A_OSCURAS = 260     # en un apagón solo se ve lo que alumbra la lintern
 
 
 def activa_en(dificultad):
-    return dificultad is not None and getattr(dificultad, "clave", None) == "tutorial"
+    return dificultad is not None and getattr(dificultad, "presenta_aliens", False)
 
 
 class PresentacionAliens:
@@ -54,8 +54,11 @@ class PresentacionAliens:
         if not candidatos:
             return
         for jugador in juego.jugadores:
+            # Escondido también lo ve (por la rendija), salvo en pleno minijuego:
+            # ahí pausar le cortaría el ritmo.
             if (jugador.preso is not None or getattr(jugador, "eliminado", False)
-                    or getattr(jugador, "escondido", False) or not getattr(jugador, "puede_moverse", True)):
+                    or getattr(jugador, "minijuego", None) is not None
+                    or not getattr(jugador, "puede_moverse", True)):
                 continue
             for alien in candidatos:
                 if self.ve_en_pantalla(jugador, alien):
@@ -64,6 +67,8 @@ class PresentacionAliens:
 
     @staticmethod
     def _se_puede_mostrar(alien):
+        if getattr(alien, "oculta", False):
+            return False
         if alien.tipo == "cambiaformas":
             return (not getattr(alien, "disfrazado", False)
                     and getattr(alien, "transformando_ms", 0) <= 0)
@@ -80,7 +85,7 @@ class PresentacionAliens:
         if not camara.colliderect(alien.hitbox):
             return False
         eventos = getattr(juego, "eventos", None)
-        if eventos is not None and eventos.apagon:
+        if eventos is not None and eventos.apagon and alien.tipo != "sombra":   # (de ella se ven los ojos)
             if math.dist(jugador.hitbox.center, alien.hitbox.center) > ALCANCE_A_OSCURAS:
                 return False
         if getattr(juego, "oscuridad", True):

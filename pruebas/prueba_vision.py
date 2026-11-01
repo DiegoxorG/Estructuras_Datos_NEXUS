@@ -51,7 +51,7 @@ avanzar()
 for i, e in enumerate(g.seleccion_roles):
     e["listo"], e["rol"] = True, NOM[i]
 g.iniciar_partida(); avanzar()
-g.current_screen = "partida"; g.tutorial.activo = False; g._terminar_tutorial()
+g.current_screen = "partida"; g.saltar_tutorial()
 mundo = g.mundo
 assert g._extras_dibujo()["vision"], "el campo de visión está siempre"
 assert not g._extras_dibujo()["oscuridad"], "la linterna solo en un apagón"

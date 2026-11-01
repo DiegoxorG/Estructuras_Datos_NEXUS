@@ -75,7 +75,7 @@ assert cerca[0] > lejos[0] and not nada
 # Susto al ser atrapado.
 g.ambiente.ultimos.clear()
 g._atrapar(j1, alien)
-# Cada tipo de alien tiene su susto (y su sonido); el Rastreador, el de siempre.
+# Cada tipo de alien tiene su susto (y su sonido).
 esperado = {"ciego": "captura_ciego", "cazador": "captura_cazador", "vigia": "captura_vigia"}.get(alien.tipo, "captura")
 assert j1.susto_ms > 0 and j1.susto_tipo in (alien.tipo, "alien") and (esperado, 1.0) in g.ambiente.ultimos
 assert g.narrador.dichas[-1][0] == "atrapado"

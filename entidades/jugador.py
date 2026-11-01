@@ -40,6 +40,7 @@ TECLAS_PUESTO_1 = {
     "habilidad": (pygame.K_f,),
     "sigilo": (pygame.K_LSHIFT,),
     "celular": (pygame.K_TAB,),
+    "soltar": (pygame.K_x,),             # soltar algo del inventario al piso
     # Izquierda/derecha solo sirven en menús del jugador (pestañas del celular);
     # para caminar se usan los controles del personaje.
     "izquierda": (pygame.K_a,),
@@ -60,6 +61,8 @@ TECLAS_PUESTO_2 = {
     "sigilo": (pygame.K_RALT, pygame.K_MODE, pygame.K_KP0),
     # El punto, junto al "-" de la habilidad (o el del teclado numérico).
     "celular": (pygame.K_PERIOD, pygame.K_KP_PERIOD),
+    # La coma, junto al punto del celular.
+    "soltar": (pygame.K_COMMA,),
     "izquierda": (pygame.K_LEFT,),
     "derecha": (pygame.K_RIGHT,),
 }
@@ -77,6 +80,7 @@ TECLAS_PUESTO_3 = _con_mando(2, {
     "habilidad": (pygame.K_p,),
     "sigilo": (),
     "celular": (pygame.K_j,),
+    "soltar": (pygame.K_l,),
     "izquierda": (),
     "derecha": (),
 })
@@ -89,6 +93,7 @@ TECLAS_PUESTO_4 = _con_mando(3, {
     "habilidad": (pygame.K_v,),
     "sigilo": (),
     "celular": (pygame.K_b,),
+    "soltar": (pygame.K_n,),
     "izquierda": (),
     "derecha": (),
 })
@@ -97,6 +102,11 @@ TECLAS_POR_PUESTO = [TECLAS_PUESTO_1, TECLAS_PUESTO_2, TECLAS_PUESTO_3, TECLAS_P
 
 # Cómo se llama su esquema de control en pantalla.
 NOMBRE_CONTROLES = ["WASD", "Flechas", "Mando 1 (I/K/O)", "Mando 2 (T/G/Y)"]
+# Los esquemas de control (el índice en TECLAS_POR_PUESTO): cada jugador
+# escoge uno (pantalla "controles", app.py) y dos no pueden tener el mismo.
+# Sin escoger, el jugador N usa el esquema N.
+WASD, FLECHAS, MANDO_1, MANDO_2 = range(4)
+NOMBRE_ESQUEMA = ["WASD", "Flechas", "Mando 1", "Mando 2"]
 
 # Puestos que solo se mueven si tienen un mando conectado.
 PUESTOS_SIN_MOVIMIENTO = (2, 3)
@@ -163,14 +173,16 @@ class Inventario(Counter):
 
 
 class Jugador:
-    def __init__(self, personaje, rol, puesto=0, con_mando=False):
+    def __init__(self, personaje, rol, puesto=0, con_mando=False, esquema=None):
         self.personaje = personaje
-        self.puesto = puesto
-        self.teclas = TECLAS_POR_PUESTO[puesto % len(TECLAS_POR_PUESTO)]
+        self.puesto = puesto          # su lugar: su mitad (o cuarto) de la pantalla
+        # Con qué juega (WASD, flechas, mando 1 o 2): por defecto, el de su puesto.
+        self.esquema = puesto % len(TECLAS_POR_PUESTO) if esquema is None else esquema
+        self.teclas = TECLAS_POR_PUESTO[self.esquema]
         self.con_mando = con_mando
-        self.controles_nombre = (f"Mando {puesto - 1}" if con_mando
-                                 else NOMBRE_CONTROLES[puesto % len(NOMBRE_CONTROLES)])
-        self.puede_moverse = puesto not in PUESTOS_SIN_MOVIMIENTO or con_mando
+        self.controles_nombre = (f"Mando {self.esquema - 1}" if con_mando
+                                 else NOMBRE_CONTROLES[self.esquema])
+        self.puede_moverse = self.esquema not in PUESTOS_SIN_MOVIMIENTO or con_mando
 
         self.puntos = 0
         self.tareas_hechas = 0
@@ -232,9 +244,10 @@ class Jugador:
         self.susto_total_ms = 0      # cuánto dura el susto actual (ambiente.py)
         self.susto_tipo = "alien"    # "alien", "ciego", "cazador", "vigia", "cf_revela" o "cf_captura"
         self.susto_disfraz = None    # sprite del prisionero que imitaba el Cambiaformas
+        self.sin_linterna_ms = 0     # la Sombra le apagó la linterna (sombra.py)
         self.vidas = VIDAS_INICIALES
         self.vidas_max = VIDAS_INICIALES     # la dificultad lo cambia (dificultad.py)
-        self.vidas_infinitas = False         # dificultad Tutorial: atrapar no quita vidas
+        self.vidas_infinitas = False         # dificultad Fácil: atrapar no quita vidas
         self.eliminado = False       # sin vidas: fuera de la partida
         self.vida_cambio_ms = 0      # para que el corazón que cambia parpadee
         self.curacion_ms = 0         # recarga de la curación de la Biomante
@@ -285,6 +298,7 @@ class Jugador:
             pygame.K_TAB: "TAB", pygame.K_PERIOD: ".", pygame.K_KP_PERIOD: ".",
             pygame.K_j: "J", pygame.K_b: "B", pygame.K_a: "A", pygame.K_d: "D",
             pygame.K_LEFT: "IZQ", pygame.K_RIGHT: "DER",
+            pygame.K_x: "X", pygame.K_COMMA: ",", pygame.K_l: "L", pygame.K_n: "N",
         }
         return nombres.get(teclas[0], "?")
 

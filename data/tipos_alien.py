@@ -5,7 +5,6 @@ cambia entre un tipo y otro son los números con los que responden las
 preguntas del árbol: qué tan lejos ven, qué tan bien oyen, qué tan rápido van.
 Así el árbol se queda igual y cada tipo se juega distinto.
 
-    Rastreador  el de siempre: ve y oye normal.
     Vigía       lento, pero ve muy lejos con un cono angosto. Hay que
                 cruzarle por detrás o esperar a que mire a otro lado.
     Ciego       no ve nada; oye el doble. Solo "siente" a quien tiene casi
@@ -15,29 +14,25 @@ Así el árbol se queda igual y cada tipo se juega distinto.
 
 El tipo de cada alien se escoge en el editor de mapa (herramienta de rutas,
 tecla T). Campo puede ajustar estos números sin tocar el resto del código.
+
+Además están los dos únicos, que no patrullan rutas: el Cambiaformas
+(cambiaformas.py) y la Sombra (sombra.py). El Rastreador (el alien "de
+siempre", sin nada especial) se quitó en oct 2026: nadie lo usaba.
 """
 
 import math
 
 
 TIPOS_ALIEN = {
-    "rastreador": {
-        "nombre": "Rastreador",
-        "descripcion": "Ve y oye normal.",
-        "vel_patrulla": 1.7, "vel_investigar": 2.4, "vel_perseguir": 3.3,
-        "alcance_vision": 300, "medio_angulo": math.radians(38),
-        "oido": 1.0,          # multiplica el radio de ruido de los jugadores
-        "tacto": 0,           # a esta distancia lo "siente" aunque no vea
-        "aguante_ms": 0,      # 0 = no se cansa
-        "cansancio_ms": 0,
-        "color": (112, 214, 120), "borde": (30, 70, 40),
-    },
     "vigia": {
         "nombre": "Vigía",
         "descripcion": "Lento, pero ve muy lejos.",
         "vel_patrulla": 1.2, "vel_investigar": 1.9, "vel_perseguir": 2.8,
         "alcance_vision": 480, "medio_angulo": math.radians(24),
-        "oido": 0.7, "tacto": 0, "aguante_ms": 0, "cansancio_ms": 0,
+        "oido": 0.7,          # multiplica el radio de ruido de los jugadores
+        "tacto": 0,           # a esta distancia lo "siente" aunque no vea
+        "aguante_ms": 0,      # 0 = no se cansa
+        "cansancio_ms": 0,
         "color": (120, 170, 240), "borde": (30, 50, 90),
     },
     "ciego": {
@@ -56,6 +51,26 @@ TIPOS_ALIEN = {
         "oido": 1.0, "tacto": 0, "aguante_ms": 2600, "cansancio_ms": 2400,
         "color": (235, 115, 90), "borde": (90, 30, 20),
     },
+    # Única (sombra.py): no patrulla rutas; solo existe en los apagones. Las
+    # velocidades son las de acercarse (ACECHAR usa vel_perseguir).
+    "sombra": {
+        "nombre": "Sombra",
+        "descripcion": "Sale en los apagones; la luz la congela.",
+        "vel_patrulla": 1.6, "vel_investigar": 2.4, "vel_perseguir": 3.0,
+        "alcance_vision": 0, "medio_angulo": 0,
+        "oido": 0, "tacto": 0, "aguante_ms": 0, "cansancio_ms": 0,
+        "color": (176, 150, 236), "borde": (24, 16, 36),
+    },
+    # Único (entidades/guardia.py): no patrulla rutas ni sale de su sala (la
+    # Bahía). Grande y lento: protege la cápsula. Lo ve todo dentro de su sala.
+    "guardia": {
+        "nombre": "Guardia",
+        "descripcion": "Protege la cápsula y no sale de la Bahía.",
+        "vel_patrulla": 1.4, "vel_investigar": 1.8, "vel_perseguir": 2.6,
+        "alcance_vision": 0, "medio_angulo": math.pi,
+        "oido": 0, "tacto": 0, "aguante_ms": 0, "cansancio_ms": 0,
+        "color": (126, 132, 112), "borde": (30, 32, 26),
+    },
     # Único (cambiaformas.py): no patrulla rutas, se disfraza de prisionero.
     # Usa su propio árbol (data/comportamiento_cambiaformas.py).
     "cambiaformas": {
@@ -68,8 +83,8 @@ TIPOS_ALIEN = {
     },
 }
 
-TIPO_POR_DEFECTO = "rastreador"
-ORDEN_TIPOS = ["rastreador", "vigia", "ciego", "cazador"]
+TIPO_POR_DEFECTO = "vigia"         # una ruta sin tipo (o con uno que ya no existe)
+ORDEN_TIPOS = ["vigia", "ciego", "cazador"]     # los de ruta (tecla T del editor)
 
 
 def datos_tipo(tipo):

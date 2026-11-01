@@ -29,8 +29,9 @@ Cómo se juega:
   que solo se creyó el rumor no ayuda.
 - Con UMBRAL_PLANOS de verdes se desbloquean los planos de la cápsula (sin
   ellos no se puede reparar, mision.py). Si el rojo le va ganando al verde,
-  los aliens se vuelven más rápidos y ven más; con UMBRAL_DERROTA_ROJO los
-  aliens toman NEXUS y se pierde (ahí irá una cinemática).
+  los aliens se vuelven más rápidos y ven más. (Antes, con mucho rojo los
+  aliens tomaban NEXUS y se perdía; se quitó: perder es solo por vidas o por
+  quedar todos encerrados.)
 
 El celular se dibuja en screens/celular.py; juego/app.py lo abre con la tecla de
 celular de cada jugador y le pasa las teclas.
@@ -47,7 +48,7 @@ from data.nexus import (
     SEGUIDORES_PRISIONERO, SEGUIDORES_BOT, SEGUIDORES_JUGADOR, SIGUE_CADA_JUGADOR,
     BOTS_AL_EMPEZAR, TICK_PROPAGACION_MS, PRIMER_RUMOR_S, RUMOR_CADA_S, NORMAL_CADA_S,
     NUEVO_BOT_CADA_S, MAX_POR_VERIFICAR, NIVELES_DESMENTIDO, NOMBRE_LUGAR, PROB_CONVENCER_UBICACION,
-    NIVELES_COMPARTIR_CIERTO, UMBRAL_PLANOS, UMBRAL_DERROTA_ROJO, DIFERENCIA_POTENCIA_MAX,
+    NIVELES_COMPARTIR_CIERTO, UMBRAL_PLANOS, DIFERENCIA_POTENCIA_MAX,
     RADIO_FOTO, PUNTOS_DESMENTIR,
     PUNTOS_REPORTAR_BOT, PUNTOS_PLANOS, PROB_CREER_RUMOR, PROB_CONVENCER,
     PUNTOS_SUPLANTACION,
@@ -111,7 +112,6 @@ class RedNexus:
         self.publicaciones = []
         self.propagaciones = []
         self.planos = False
-        self.derrota = False
         self.evidencias = {}        # jugador -> [rumores (Publicacion) con foto]
         self.investigando = {}      # jugador -> rumor (Publicacion) que está investigando
         self.vistas = {}            # jugador -> ids de publicaciones ya vistas
@@ -634,10 +634,6 @@ class RedNexus:
         verde, rojo = self.barras()
         if not self.planos and verde >= self.umbral_planos:
             self.desbloquear_planos()
-        if not self.derrota and rojo >= UMBRAL_DERROTA_ROJO:
-            self.derrota = True
-            for jugador in self.juego.jugadores:
-                jugador.avisar("Los aliens tomaron NEXUS: nadie les cree a ustedes.", COLOR_MAL)
 
     def desbloquear_planos(self):
         if self.planos:

@@ -2,7 +2,7 @@
 
     python pruebas/prueba_victoria.py
 
-Consolas, piezas, la cápsula que no se repara sin planos, los planos al 75%
+Consolas, piezas, la cápsula que no se repara sin planos, los planos al 70%
 de confianza (Normal), la huida y la victoria. Revisa también la flecha al
 objetivo en cada parte.
 """
@@ -41,7 +41,8 @@ def nueva_partida(roles):
     # El tutorial ya no se acaba solo: aquí se da por terminado (con el
     # tutorial abierto la puerta de la prisión no abre).
     if g.tutorial is not None:
-        g.tutorial.activo = False; g._terminar_tutorial()
+        g.saltar_tutorial()
+        g.presentacion = None   # la ventana de alien nuevo pausaría la prueba
     # NEXUS se prueba aparte (prueba_nexus.py): aquí no mete rumores ni pide planos.
     # Y el Cambiaformas también (prueba_cambiaformas.py).
     return g
@@ -77,7 +78,7 @@ def mantener(g, j, segundos):
 g = nueva_partida(("Tecnomante", "Forjador"))
 tec, forj = g.jugadores
 m = g.mision
-assert g.dificultad.clave == "normal" and g.nexus.umbral_planos == 0.75
+assert g.dificultad.clave == "normal" and g.nexus.umbral_planos == 0.70
 g.cambiaformas.calma_ms = 10 ** 9
 g.nexus.reloj_rumor_ms = 10 ** 9
 calmar_aliens(g)
@@ -104,7 +105,7 @@ frames(g, 3)
 assert red.planos, red.barras()
 mantener(g, forj, M.REPARACION_ROL_S)
 assert m.fase == "huida", m.fase
-print("con planos (75%): reparada | flecha:", m.punto_objetivo(tec)[1])
+print("con planos (70%): reparada | flecha:", m.punto_objetivo(tec)[1])
 calmar_aliens(g); g.cambiaformas.descanso_ms = 10**9
 poner(tec, m.capsula.center); poner(forj, m.capsula.center)
 frames(g, 3)

@@ -52,7 +52,7 @@ def escena(g, apagon):
         j[1].avisar("Pieza recogida (2)", (96, 200, 120))
     g.eventos.lanzar("alarma")
     if apagon:
-        g.tutorial.activo = False
+        if g.tutorial is not None: g.tutorial.activo = False
         g.eventos.lanzar("apagon")
     g.decir("apagon", forzar=True)
     for _ in range(90):

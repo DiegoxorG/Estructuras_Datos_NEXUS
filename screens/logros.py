@@ -66,10 +66,11 @@ def render_aviso_logro(screen, gestor):
 
 # -- Árbol completo ------------------------------------------------------------------------
 
-def estado(nodo):
+def estado(nodo, catalogo=False):
+    """En el catálogo del menú se ven todos (los que faltan, sin palomita)."""
     if nodo.obtenido:
         return "obtenido"
-    return "visible" if nodo.visible else "oculto"
+    return "visible" if nodo.visible or catalogo else "oculto"
 
 
 def _caja_nodo(screen, rect, nodo, est, seleccionado=False):
@@ -97,13 +98,19 @@ def _caja_nodo(screen, rect, nodo, est, seleccionado=False):
         pygame.draw.rect(screen, COLOR_SELECCION, rect.inflate(8, 8), 2, border_radius=7)
 
 
-def render_arbol_logros(screen, arbol, seleccionado=None):
-    """Dibuja el árbol entero. Devuelve {nodo: rect} para el mouse."""
+def render_arbol_logros(screen, arbol, seleccionado=None, catalogo=None):
+    """Dibuja el árbol entero. Devuelve {nodo: rect} para el mouse.
+
+    `catalogo` ({clave: veces}): el de "Logros" en el menú principal. Se ven
+    todos, con nombre y descripción, y los obtenidos son los que salieron
+    alguna vez en este computador (juego/historial_logros.py)."""
     ancho, alto = screen.get_size()
     screen.fill(COLOR_FONDO_ARBOL)
+    es_catalogo = catalogo is not None
 
     f_titulo = fuente("subtitle")
-    titulo = f_titulo.render("Logros de esta partida", True, COLOR_SELECCION)
+    titulo = f_titulo.render("Todos los logros" if es_catalogo else "Logros de esta partida",
+                             True, COLOR_SELECCION)
     screen.blit(titulo, (32, 20))
     cuenta = f_titulo.render(f"{arbol.obtenidos()}/{arbol.total()}", True, COLOR_TEXTO)
     screen.blit(cuenta, (ancho - cuenta.get_width() - 32, 20))
@@ -130,7 +137,7 @@ def render_arbol_logros(screen, arbol, seleccionado=None):
     maximo = int(paso_x - tam - 34)
     etiquetas = {}
     for nodo in arbol.preorden():
-        est = estado(nodo)
+        est = estado(nodo, es_catalogo)
         nombre = nodo.nombre if est != "oculto" else "???"
         color = COLOR_TEXTO if est == "obtenido" else (COLOR_TENUE if est == "visible" else COLOR_OCULTO)
         etiquetas[nodo] = (est, _renglones(nombre, f_nombre, maximo, color))
@@ -172,7 +179,7 @@ def render_arbol_logros(screen, arbol, seleccionado=None):
             y += r.get_height()
         rects[nodo] = zona
 
-    _info(screen, pygame.Rect(32, alto - alto_info - 36, ancho - 64, alto_info), seleccionado)
+    _info(screen, pygame.Rect(32, alto - alto_info - 36, ancho - 64, alto_info), seleccionado, catalogo)
     pista = fuente_de_tamano(15).render(
         "Flechas: moverse por el árbol (izq: padre, der: hijo)  ·  Esc: volver", True, COLOR_TENUE)
     screen.blit(pista, pista.get_rect(midbottom=(ancho // 2, alto - 10)))
@@ -193,7 +200,7 @@ def _renglones(texto, f, maximo, color):
     return [f.render(mejor[1], True, color), f.render(mejor[2], True, color)]
 
 
-def _info(screen, caja, nodo):
+def _info(screen, caja, nodo, catalogo=None):
     fondo = pygame.Surface(caja.size, pygame.SRCALPHA)
     fondo.fill((24, 24, 44, 230))
     screen.blit(fondo, caja.topleft)
@@ -201,7 +208,7 @@ def _info(screen, caja, nodo):
         return
     color = _color(nodo)
     pygame.draw.rect(screen, color, caja, 2, border_radius=6)
-    est = estado(nodo)
+    est = estado(nodo, catalogo is not None)
     f1, f2 = fuente_de_tamano(22), fuente_de_tamano(16)
     if est == "oculto":
         nombre = "???"
@@ -210,7 +217,11 @@ def _info(screen, caja, nodo):
         abajo = ""
     else:
         nombre, desc = nodo.nombre, nodo.descripcion
-        if est == "obtenido":
+        if catalogo is not None:
+            veces = catalogo.get(nodo.clave, 0)
+            abajo = (f"Conseguido en {veces} partida{'s' if veces != 1 else ''}" if veces
+                     else "Todavía no lo consiguen en este computador")
+        elif est == "obtenido":
             quien = f"el {nodo.quien}" if nodo.quien else "el equipo"
             abajo = (f"Conseguido por {quien} (al conseguir uno que sale de este)"
                      if nodo.por_camino else f"Conseguido por {quien}")

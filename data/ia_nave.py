@@ -10,10 +10,31 @@ Eventos que usa el juego (ia_nave.py):
     ambiente, tutorial, despertar, apagon, alarma, compuerta,
     fin_evento, puerta_doble, luz, sello, eliminado, curacion,
     prueba, infiltrado_expuesto, acusacion_falsa, rumor, desmentido, planos, cambiaformas,
-    sabotaje, prisionero_rescatado, dificultad_sube, dificultad_baja
+    sabotaje, prisionero_rescatado, dificultad_sube, dificultad_baja,
+    sombra, sombra_linterna, guardia_distraido, guardia_come, planta
 """
 
 FRASES = {
+    "guardia_distraido": [
+        "¿Qué es esa frecuencia, {rol}? Mi Guardia se quedó embobado. Que no les dure.",
+        "Interesante, {rol}. El Guardia escucha. Ustedes, corran.",
+    ],
+    "guardia_come": [
+        "¿Le diste de comer a mi Guardia, {rol}? Ahora no se va a mover de ahí.",
+        "Traición por una fruta. El Guardia ya no les estorba.",
+    ],
+    "planta": [
+        "La planta de la Biosfera dio fruto. Qué tierno, {rol}.",
+        "Una fruta. ¿Para quién será, {rol}?",
+    ],
+    "sombra": [
+        "Algo se mueve en la oscuridad. No le den la espalda.",
+        "¿Ven esos ojos? Ella sí los ve a ustedes. Mientras la alumbren, no se mueve.",
+    ],
+    "sombra_linterna": [
+        "La Sombra te apagó la linterna, {rol}. Qué oscuro está, ¿no?",
+        "Sin linterna, {rol}. Ahora sí da miedo.",
+    ],
     "cambiaformas": [
         "Sorpresa. No todos los prisioneros son lo que parecen, {rol}.",
         "Te dije que no confiaras en cualquier perfil.",

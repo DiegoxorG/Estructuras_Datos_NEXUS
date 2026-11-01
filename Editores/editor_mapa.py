@@ -9,8 +9,11 @@ Qué se pone aquí (las paredes siguen en Editores/hitbox_editor.py):
     2  Rutas de aliens             por dónde patrulla cada alien
     3  Escondites                  casilleros, armarios...
     4  Celdas                      a dónde van los que atrapan
-    5  Puerta con código           la que se abre con el código (fase 1)
-    6  Notas                       una de las de antes de la puerta trae el código
+    5  Puertas con código          se abren con un código (la 1.ª: fase 1). Después
+                                   de poner una, los clics ponen sus notas de
+                                   código (una trae el código); X termina. Cada
+                                   puerta tiene su color, su código y sus notas
+    6  Notas                       las normales, de historia
     7  Consolas de navegación      las que hay que apagar (fase 2)
     8  Cápsula de escape           fases 3 y 4; sin cápsula no hay misión
     9  Piezas                      las recoge el Forjador
@@ -20,7 +23,7 @@ Qué se pone aquí (las paredes siguen en Editores/hitbox_editor.py):
              terminales del Tecnomante, paneles del
              Forjador, consumibles (decodificador / kit), pruebas del infiltrado
              y salas (el nombre que sale en el HUD: Laboratorio, Pasillo...).
-    En las rutas, T cambia el tipo de alien (Rastreador, Vigía, Ciego, Cazador).
+    En las rutas, T cambia el tipo de alien (Vigía, Ciego, Cazador).
     También se puede hacer clic en la lista de la derecha.
 
 Mouse: clic izquierdo pone o arrastra, clic derecho borra, rueda hace zoom y
@@ -53,7 +56,7 @@ import pygame
 from juego import objetos_mapa
 from juego.mundo import Mundo, CARPETA_FONDOS
 from data.tipos_alien import TIPOS_ALIEN, ORDEN_TIPOS, TIPO_POR_DEFECTO
-from misiones.mision import notas_antes_de_la_puerta
+from misiones.mision import notas_antes_de_la_puerta, sortear_candidatas, color_puerta
 
 
 # -- Herramientas ------------------------------------------------------------------------
@@ -63,10 +66,12 @@ HERRAMIENTAS = [
     {"clave": "rutas_aliens", "nombre": "Rutas de aliens", "color": (236, 70, 60)},
     {"clave": "escondites", "nombre": "Escondites", "color": (130, 160, 210)},
     {"clave": "celdas", "nombre": "Celdas", "color": (190, 190, 205)},
-    {"clave": "puerta", "nombre": "Puerta con código", "color": (200, 80, 90)},
+    {"clave": "puertas_codigo", "nombre": "Puertas con código", "color": (200, 80, 90)},
     {"clave": "notas", "nombre": "Notas", "color": (240, 226, 170)},
     {"clave": "consolas", "nombre": "Consolas de navegación", "color": (180, 110, 255)},
     {"clave": "capsula", "nombre": "Cápsula de escape", "color": (90, 220, 230)},
+    {"clave": "guardia", "nombre": "Guardia (frente a la cápsula)", "color": (156, 162, 138)},
+    {"clave": "planta", "nombre": "Planta (fruta para el Guardia)", "color": (110, 200, 90)},
     {"clave": "piezas", "nombre": "Piezas", "color": (255, 170, 50)},
     {"clave": "nexus", "nombre": "Terminales NEXUS", "color": (90, 200, 255)},
     {"clave": "compuertas", "nombre": "Compuertas (evento)", "color": (255, 120, 60)},
@@ -85,7 +90,10 @@ TECLAS_HERRAMIENTA = [pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5
 # con nombre, un solo punto, o la puerta (punto con tamaño).
 LISTAS = ("piezas", "celdas", "notas", "consolas", "consumibles", "nexus", "fusibles", "pruebas")
 CON_NOMBRE = ("escondites", "terminales", "paneles")
-UNICOS = ("spawn", "capsula")
+UNICOS = ("spawn", "capsula", "guardia", "planta")
+# Las notas de código de una puerta: normales (todas las dificultades) y
+# "solo Difícil" (Difícil e Inteligente). Cosa del editor -> lista del archivo.
+TIPO_NOTA_PUERTA = {"nota_codigo": "notas", "nota_dificil": "notas_dificil"}
 # Rectángulos con tamaño, como la puerta, pero varios.
 RECTS = ("compuertas", "puertas_dobles")
 TAMANO_PANEL = (30, 30)
@@ -105,8 +113,11 @@ TAMANOS = {
     "piezas": (34, 34),
     "celdas": (40, 40),
     "notas": (30, 30),
+    "notas_codigo": (30, 30),
     "consolas": (70, 50),
     "capsula": (210, 130),
+    "guardia": (150, 60),
+    "planta": (56, 56),
     "consumibles": (34, 34),
     "nexus": (60, 60),
     "fusibles": (40, 46),
@@ -147,19 +158,35 @@ AYUDA_HERRAMIENTA = {
                "de los barrotes, en la pared).",
                "Tiene que quedar cerca del piso: desde",
                "ahí la liberan. Clic derecho: borra."],
-    "puerta": ["Clic: pone la puerta (una sola). La",
-               "cierra el código de una nota de antes",
-               "de la puerta (salen como \"(código)\").",
-               "+ / -: más alta o más baja.",
-               "[ / ]: más angosta o más ancha.",
-               "Clic derecho: la quita (sin fase 1)."],
+    "puertas_codigo": ["1) Clic: pone una puerta (la 1.ª es la de",
+               "   la prisión: fase 1). Cada una, su color.",
+               "2) Después, cada clic pone una NOTA DE",
+               "   CÓDIGO de esa puerta: en una de ellas (se",
+               "   sortea, de las de antes de la puerta)",
+               "   sale su código. X: terminar.",
+               "3) Con X apagada, otro clic pone otra",
+               "   puerta. Clic en una puerta: la elige",
+               "   (y sus notas siguen con los clics).",
+               "F: las próximas notas son SOLO DIFÍCIL",
+               "   (para poner afuera el código de una",
+               "   puerta que en Fácil/Normal está adentro",
+               "   de la prisión). F otra vez: normales.",
+               "Arrastrar: mueve. Clic derecho: borra la",
+               "nota; en una puerta, la quita con sus notas.",
+               "+ / - y [ / ]: tamaño de la elegida."],
     "notas": ["Clic: pone una nota.  Arrastrar: mueve.",
-              "El texto sale de data/notas.py, en orden.",
-              "Una de las que se alcanzan desde el inicio",
-              "con la puerta cerrada trae el código (se",
-              "sortea): salen como \"Nota N (código)\"."],
+              "Son las normales, de historia: el texto",
+              "sale de data/notas.py, en orden. El",
+              "código va en las notas de código (las",
+              "pone la herramienta Puerta)."],
     "consolas": ["Clic: pone una consola.",
                  "Hay que apagarlas todas (fase 2)."],
+    "guardia": ["Clic: el puesto del Guardia (uno solo), frente a la cápsula.",
+                "No sale de la sala donde lo pongas (la Bahía).",
+                "Clic derecho lo quita."],
+    "planta": ["Clic: la planta (una sola) que da la fruta para el Guardia.",
+               "La hace crecer el Biomante (o alguien con abono).",
+               "Clic derecho la quita."],
     "capsula": ["Clic: pone la cápsula (una sola).",
                 "Sin cápsula, el mapa no tiene misión.",
                 "Clic derecho: la quita."],
@@ -249,6 +276,9 @@ class EditorMapa:
             self.datos = objetos_mapa.normalizar(objetos_mapa.cargar(mapa, ruta=ruta_lectura))
 
         self.herramienta = 1
+        self.notas_de_puerta = False   # herramienta Puertas: los clics ponen notas de código
+        self.puerta_elegida = None     # a qué puerta van esas notas (índice)
+        self.notas_solo_dificil = False  # F: las notas que se ponen van a "notas_dificil"
         self.ruta_elegida = 0
         self.arrastre = None          # lo que se está arrastrando
         self.antes = None             # copia de los datos al empezar un clic
@@ -281,7 +311,13 @@ class EditorMapa:
 
     @property
     def zoom(self):
-        return ZOOMS[self.zoom_i]
+        """El zoom de verdad: el del mapa escalado (su ancho es entero), para
+        que lo que se dibuja encima caiga en los mismos píxeles que el mapa."""
+        return int(self.mundo.ancho * ZOOMS[self.zoom_i]) / self.mundo.ancho
+
+    def _cam(self):
+        """La cámara en píxeles enteros (la misma para el mapa y lo de encima)."""
+        return math.floor(self.cam[0]), math.floor(self.cam[1])
 
     @property
     def area_mapa(self):
@@ -296,10 +332,21 @@ class EditorMapa:
                     (self.mundo.alto * self.zoom - area.height) / 2]
 
     def a_mundo(self, pos):
-        return ((pos[0] + self.cam[0]) / self.zoom, (pos[1] + self.cam[1]) / self.zoom)
+        cx, cy = self._cam()
+        return ((pos[0] + cx) / self.zoom, (pos[1] + cy) / self.zoom)
 
     def a_pantalla(self, p):
-        return (int(p[0] * self.zoom - self.cam[0]), int(p[1] * self.zoom - self.cam[1]))
+        # El mapa se escala por vecino más cercano: el píxel x del mundo
+        # empieza en la columna ceil(x * zoom). Así el borde de una pared
+        # coincide con el borde del dibujo.
+        cx, cy = self._cam()
+        z = self.zoom
+        return (math.ceil(p[0] * z - 1e-9) - cx, math.ceil(p[1] * z - 1e-9) - cy)
+
+    def rect_a_pantalla(self, rect, minimo=1):
+        x0, y0 = self.a_pantalla(rect.topleft)
+        x1, y1 = self.a_pantalla(rect.bottomright)
+        return pygame.Rect(x0, y0, max(minimo, x1 - x0), max(minimo, y1 - y0))
 
     def norm(self, p):
         return [p[0] / self.mundo.ancho, p[1] / self.mundo.alto]
@@ -318,7 +365,7 @@ class EditorMapa:
 
     def _mapa_escalado(self):
         if self.zoom not in self._escalados:
-            tam = (int(self.mundo.ancho * self.zoom), int(self.mundo.alto * self.zoom))
+            tam = (round(self.mundo.ancho * self.zoom), round(self.mundo.alto * self.zoom))
             self._escalados[self.zoom] = pygame.transform.scale(self.mundo.imagen, tam)
         return self._escalados[self.zoom]
 
@@ -330,12 +377,19 @@ class EditorMapa:
 
     def posicion(self, clave, obj):
         """Punto del mundo (píxeles) de un objeto de esa parte."""
-        if clave in LISTAS or clave in UNICOS:
+        if clave in LISTAS or clave in UNICOS or clave == "notas_codigo":
             return self.px(*obj)
         return self.px(obj["rx"], obj["ry"])
 
-    def rect_puerta(self):
-        puerta = self.datos.get("puerta")
+    def puertas(self):
+        return self.datos.get("puertas_codigo") or []
+
+    def rects_puertas(self):
+        return [self.rect_puerta(i) for i in range(len(self.puertas()))]
+
+    def rect_puerta(self, i=0):
+        puertas = self.puertas()
+        puerta = puertas[i] if i < len(puertas) else None
         if not puerta:
             return None
         rect = pygame.Rect(0, 0, max(8, int(puerta["ancho"] * self.mundo.ancho)),
@@ -368,10 +422,19 @@ class EditorMapa:
                 if math.dist(p, rect.center) <= radio or rect.collidepoint(p):
                     return ("unico", clave)
             return None
-        if clave == "puerta":
-            rect = self.rect_puerta()
-            if rect is not None and rect.inflate(radio, radio).collidepoint(p):
-                return ("puerta",)
+        if clave == "puertas_codigo":
+            for i, puerta in enumerate(self.puertas()):
+                for cosa, lista in TIPO_NOTA_PUERTA.items():
+                    for k, punto in enumerate(puerta.get(lista, [])):
+                        rect = self.rect_de("notas_codigo", self.px(*punto))
+                        d = math.dist(p, rect.center)
+                        if rect.inflate(radio, radio).collidepoint(p) and (mejor is None or d < mejor_d):
+                            mejor, mejor_d = (cosa, i, k), d
+            if mejor is not None:
+                return mejor
+            for i in range(len(self.puertas())):
+                if self.rect_puerta(i).inflate(radio, radio).collidepoint(p):
+                    return ("puerta", i)
             return None
         if clave == "paneles":
             for i, obj in enumerate(self.datos["paneles"]):
@@ -441,7 +504,10 @@ class EditorMapa:
         if cosa[0] == "unico":
             self.datos[cosa[1]] = [rx, ry]
         elif cosa[0] == "puerta":
-            self.datos["puerta"]["rx"], self.datos["puerta"]["ry"] = rx, ry
+            puerta = self.datos["puertas_codigo"][cosa[1]]
+            puerta["rx"], puerta["ry"] = rx, ry
+        elif cosa[0] in TIPO_NOTA_PUERTA:
+            self.datos["puertas_codigo"][cosa[1]][TIPO_NOTA_PUERTA[cosa[0]]][cosa[2]] = [rx, ry]
         elif cosa[0] == "punto":
             self.datos["rutas_aliens"][cosa[1]][cosa[2]] = [rx, ry]
         elif cosa[0] == "rect":
@@ -495,6 +561,13 @@ class EditorMapa:
         if cosa is not None:
             if cosa[0] == "punto":
                 self.ruta_elegida = cosa[1]
+            if cosa[0] in ("puerta",) + tuple(TIPO_NOTA_PUERTA):
+                cambio = self.puerta_elegida != cosa[1] or not self.notas_de_puerta
+                self.puerta_elegida, self.notas_de_puerta = cosa[1], True
+                if cosa[0] == "puerta" and cambio:
+                    nombre = color_puerta(cosa[1])[0]
+                    self.avisar(f"Puerta {nombre} elegida: los clics ponen sus notas de código "
+                                "(X termina).")
             self.arrastre = cosa
             return
         rx, ry = self.norm(p)
@@ -503,9 +576,26 @@ class EditorMapa:
         if clave in UNICOS:
             self.datos[clave] = [rx, ry]
             self.arrastre = ("unico", clave)
-        elif clave == "puerta":
-            self.datos["puerta"] = {"rx": rx, "ry": ry, "ancho": 0.02, "alto": 0.07}
-            self.arrastre = ("puerta",)
+        elif (clave == "puertas_codigo" and self.notas_de_puerta and self.puerta_elegida is not None
+              and self.puerta_elegida < len(self.puertas())):
+            i = self.puerta_elegida
+            tipo = "nota_dificil" if self.notas_solo_dificil else "nota_codigo"
+            notas = self.datos["puertas_codigo"][i].setdefault(TIPO_NOTA_PUERTA[tipo], [])
+            notas.append([rx, ry])
+            self.arrastre = (tipo, i, len(notas) - 1)
+            cual = "solo Difícil " if self.notas_solo_dificil else ""
+            self.avisar(f"Puerta {color_puerta(i)[0]}: nota de código {cual}{len(notas)}. "
+                        "Otro clic pone otra; X termina; F cambia normal/solo Difícil.")
+        elif clave == "puertas_codigo":
+            puertas = self.datos.setdefault("puertas_codigo", [])
+            puertas.append({"rx": rx, "ry": ry, "ancho": 0.02, "alto": 0.07, "notas": [],
+                            "notas_dificil": []})
+            i = len(puertas) - 1
+            self.arrastre = ("puerta", i)
+            self.puerta_elegida, self.notas_de_puerta = i, True
+            que = " (la de la prisión: fase 1)" if i == 0 else ""
+            self.avisar(f"Puerta {color_puerta(i)[0]}{que} puesta. Ahora haz clic donde pueden estar "
+                        "las notas con su código (X para terminar).")
         elif clave == "rutas_aliens":
             rutas = self.datos["rutas_aliens"]
             if not rutas:
@@ -569,7 +659,22 @@ class EditorMapa:
         if clave == "spawn":
             self.datos["spawn"] = None
             self.avisar("Inicio de vuelta al centro del mapa.")
-        elif clave in UNICOS or clave == "puerta":
+        elif clave == "puertas_codigo":
+            if cosa is not None and cosa[0] in TIPO_NOTA_PUERTA:
+                del self.datos["puertas_codigo"][cosa[1]][TIPO_NOTA_PUERTA[cosa[0]]][cosa[2]]
+            elif cosa is not None and cosa[0] == "puerta":
+                i = cosa[1]
+                quitada = self.datos["puertas_codigo"].pop(i)
+                nombre = color_puerta(i)[0]
+                cuantas = len(quitada["notas"]) + len(quitada.get("notas_dificil", []))
+                self.avisar(f"Puerta {nombre} quitada" + (f", con sus {cuantas} notas de código."
+                                                         if cuantas else ".")
+                            + (" Las que siguen cambian de color." if i < len(self.puertas()) else ""))
+                if self.puerta_elegida == i:
+                    self.puerta_elegida, self.notas_de_puerta = None, False
+                elif self.puerta_elegida is not None and self.puerta_elegida > i:
+                    self.puerta_elegida -= 1
+        elif clave in UNICOS:
             if cosa is not None:
                 self.datos[clave] = None
         elif cosa is None:
@@ -710,22 +815,62 @@ class EditorMapa:
             obj["alto"] = round(min(0.3, max(0.005, obj["alto"] + d_alto)), 4)
             self._terminar_cambio()
             return
-        if self.clave != "puerta" or not self.datos.get("puerta"):
+        if self.clave != "puertas_codigo" or not self.puertas():
             return
+        cosa = self.buscar("puertas_codigo", pygame.mouse.get_pos())
+        if cosa is not None and cosa[0] == "puerta":
+            i = cosa[1]
+        elif self.puerta_elegida is not None and self.puerta_elegida < len(self.puertas()):
+            i = self.puerta_elegida
+        else:
+            i = len(self.puertas()) - 1
         self._empezar_cambio()
-        puerta = self.datos["puerta"]
+        puerta = self.datos["puertas_codigo"][i]
         puerta["ancho"] = round(min(0.3, max(0.005, puerta["ancho"] + d_ancho)), 4)
         puerta["alto"] = round(min(0.3, max(0.005, puerta["alto"] + d_alto)), 4)
         self._terminar_cambio()
 
     def cambiar_radio(self, pos, delta):
-        if self.clave in ("puerta", "paneles") or self.clave in RECTS:
+        if self.clave in ("puertas_codigo", "paneles") or self.clave in RECTS:
             self.cambiar_puerta(0, delta)
+
+    def alternar_notas_de_puerta(self):
+        """X con la herramienta Puertas: deja de poner notas de código (el
+        próximo clic pone otra puerta) o vuelve a ponerlas en la elegida."""
+        if not self.puertas():
+            self.avisar("Primero pon una puerta (clic).")
+            return
+        if self.puerta_elegida is None or self.puerta_elegida >= len(self.puertas()):
+            self.puerta_elegida = len(self.puertas()) - 1
+        nombre = color_puerta(self.puerta_elegida)[0]
+        n = len(self.puertas()[self.puerta_elegida]["notas"])
+        self.notas_de_puerta = not self.notas_de_puerta
+        if self.notas_de_puerta:
+            self.avisar(f"Puerta {nombre}: clic pone más notas de código (van {n}). X termina.")
+        else:
+            self.avisar(f"Puerta {nombre} lista ({n} notas). El próximo clic pone otra puerta; "
+                        "clic en una puerta la elige.")
+
+    def alternar_solo_dificil(self):
+        """F con la herramienta Puertas: las próximas notas de código son
+        "solo Difícil" (o vuelven a ser normales)."""
+        self.notas_solo_dificil = not self.notas_solo_dificil
+        if self.puertas() and not self.notas_de_puerta:
+            if self.puerta_elegida is None or self.puerta_elegida >= len(self.puertas()):
+                self.puerta_elegida = len(self.puertas()) - 1
+            self.notas_de_puerta = True
+        if self.notas_solo_dificil:
+            self.avisar("Notas SOLO DIFÍCIL: solo salen en Difícil (e Inteligente), donde nadie "
+                        "se escapa solo de la celda. Ponlas afuera de la prisión. F: normales.")
+        else:
+            self.avisar("Notas normales (salen en todas las dificultades).")
 
     def restaurar_herramienta(self):
         self._empezar_cambio()
         fabrica = objetos_mapa.normalizar(objetos_mapa.por_defecto())
         self.datos[self.clave] = copy.deepcopy(fabrica[self.clave])
+        if self.clave == "puertas_codigo":       # las notas de código se van con sus puertas
+            self.notas_de_puerta, self.puerta_elegida = False, None
         self.ruta_elegida = 0
         self._terminar_cambio()
         self.avisar(f"{HERRAMIENTAS[self.herramienta]['nombre']}: vaciada.")
@@ -792,15 +937,25 @@ class EditorMapa:
         ocupados = []   # (rect, id) de todo lo que ocupa espacio
 
         for clave in CON_NOMBRE + LISTAS:
-            for i, obj in enumerate(self.datos[clave]):
+            for i, obj in enumerate(self.datos.get(clave, [])):
                 rect = self.rect_de(clave, self.posicion(clave, obj))
                 ocupados.append((rect, (clave, i)))
-        if self.datos.get("capsula"):
-            ocupados.append((self.rect_de("capsula", self.px(*self.datos["capsula"])), ("capsula", 0)))
+        # Las notas de código de cada puerta: ("nota_codigo", puerta, nota).
+        nombres_nota = {}
+        for i, puerta in enumerate(self.puertas()):
+            for cosa, lista in TIPO_NOTA_PUERTA.items():
+                for k, punto in enumerate(puerta.get(lista, [])):
+                    ocupados.append((self.rect_de("notas_codigo", self.px(*punto)), (cosa, i, k)))
+                    nombres_nota[(cosa, i, k)] = (f"Puerta {color_puerta(i)[0]}, nota "
+                                                  f"{'D' if cosa == 'nota_dificil' else ''}{k + 1}")
+        for unico in ("capsula", "guardia", "planta"):
+            if self.datos.get(unico):
+                ocupados.append((self.rect_de(unico, self.px(*self.datos[unico])), (unico, 0)))
 
         for rect, ident in ocupados:
-            clave, i = ident
-            nombre = nombres.get(clave, "Cápsula")
+            clave, i = ident[0], ident[1]
+            nombre = nombres.get(clave, {"guardia": "Guardia", "planta": "Planta"}.get(clave, "Cápsula"))
+            quien = nombres_nota.get(ident) or f"{nombre} {i + 1}"
             if clave == "celdas":
                 # Las celdas van detrás de los barrotes, o sea, en la pared: lo
                 # que importa es que quien libera llegue lo bastante cerca.
@@ -810,13 +965,13 @@ class EditorMapa:
                 continue
             if self.mundo.colisiona(rect):
                 self.estado[ident] = "pared"
-                self.problemas.append(f"{nombre} {i + 1}: choca con una pared")
+                self.problemas.append(f"{quien}: choca con una pared")
             elif not self._alcanzable(rect):
                 self.estado[ident] = "lejos"
-                self.problemas.append(f"{nombre} {i + 1}: no se llega caminando")
+                self.problemas.append(f"{quien}: no se llega caminando")
             elif any(r2.colliderect(rect) for r2, otro in ocupados if otro != ident):
                 self.estado[ident] = "encima"
-                self.problemas.append(f"{nombre} {i + 1}: está encima de otra cosa")
+                self.problemas.append(f"{quien}: está encima de otra cosa")
 
         if self.datos.get("spawn"):
             rect = self.rect_de("spawn", self.px(*self.datos["spawn"]))
@@ -828,24 +983,72 @@ class EditorMapa:
         if self.datos.get("capsula"):
             if not self.datos["celdas"]:
                 self.problemas.append("Misión: no hay celdas (si atrapan a alguien vuelve al inicio)")
-            if self.datos.get("puerta") and not self.datos["notas"]:
-                self.problemas.append("Misión: hay puerta pero no notas con el código")
+            if bool(self.datos.get("guardia")) != bool(self.datos.get("planta")):
+                self.problemas.append("Guardia: van juntos el Guardia y la planta (si no, no hay cómo quitarlo)")
 
-        # Qué notas pueden traer el código: las que se alcanzan desde el inicio
-        # con la puerta y las puertas para dos cerradas (igual que el juego).
-        self.notas_codigo = set()
-        puerta = self.rect_puerta()
-        if puerta is not None and self.datos["notas"]:
+        # Dónde puede ir el código de cada puerta (igual que el juego,
+        # sortear_candidatas): sus notas de código que se alcanzan desde el
+        # inicio con ella cerrada (y las demás también, salvo las que ya se
+        # pueden abrir antes); si no tiene, una nota normal.
+        self.pueden_tener_codigo = set()
+        if self.puertas() and self.datos.get("capsula"):
             spawn = self.datos.get("spawn")
             desde = self.px(*spawn) if spawn else (self.mundo.ancho / 2, self.mundo.alto / 2)
             desde = self.mundo.punto_libre((int(desde[0]), int(desde[1])), 48, 19)
-            notas = [self.rect_de("notas", self.posicion("notas", n)) for n in self.datos["notas"]]
+            normales = [self.rect_de("notas", self.posicion("notas", n)) for n in self.datos["notas"]]
             dobles = [self.rect_dict(d) for d in self.datos.get("puertas_dobles", [])]
-            self.notas_codigo = set(notas_antes_de_la_puerta(self.mundo, desde, notas, [puerta] + dobles))
-            if not self.notas_codigo:
-                self.problemas.append("Puerta con código: ninguna nota se alcanza antes de la puerta "
-                                      "(el juego la dejaría abierta)")
-        elif self.datos.get("puerta") or self.datos["consolas"]:
+            # Donde queda el que sale de una celda (el código puede ir adentro
+            # de la prisión: lo lee el que encierran y abre desde adentro).
+            adentro = [self.mundo.punto_libre((int(c[0]), int(c[1]) + 90), 48, 19)
+                       for c in (self.px(*p) for p in self.datos["celdas"])]
+
+            def rects(puntos):
+                return [self.rect_de("notas_codigo", self.px(*n)) for n in puntos]
+
+            # Fácil y Normal: solo las notas normales de cada puerta.
+            sorteo = sortear_candidatas(self.mundo, desde, self.rects_puertas(),
+                                        [rects(p["notas"]) for p in self.puertas()], normales,
+                                        dobles, adentro)
+            # Difícil (e Inteligente): también las "solo Difícil", y sin escapar
+            # solo de la celda no sirve que el código esté adentro.
+            sorteo_dificil = sortear_candidatas(
+                self.mundo, desde, self.rects_puertas(),
+                [rects(p["notas"] + p.get("notas_dificil", [])) for p in self.puertas()], normales,
+                dobles, adentro)
+            for i, (puerta, resultado, dificil) in enumerate(zip(self.puertas(), sorteo, sorteo_dificil)):
+                nombre = f"Puerta {color_puerta(i)[0]}"
+                n_normales = len(puerta["notas"])
+                if resultado is not None and resultado[0] in ("codigo", "adentro"):
+                    self.pueden_tener_codigo |= {("nota_codigo", i, k) for k in resultado[1]}
+                elif resultado is not None:
+                    self.pueden_tener_codigo |= {("notas", k) for k in resultado[1]}
+                if dificil is not None and dificil[0] in ("codigo", "adentro"):
+                    self.pueden_tener_codigo |= {("nota_dificil", i, k - n_normales)
+                                                 for k in dificil[1] if k >= n_normales}
+                if not puerta["notas"]:
+                    self.problemas.append(f"{nombre}: no tiene notas de código (elígela con un clic "
+                                          "y pon sus notas); su código iría en una nota normal")
+                elif resultado is None or resultado[0] == "normal":
+                    self.problemas.append(f"{nombre}: ninguna de sus notas de código se alcanza antes "
+                                          "de abrirla")
+                if resultado is None:
+                    self.problemas.append(f"{nombre}: su código no se puede leer antes de abrirla "
+                                          "(el juego la dejaría abierta)")
+                if dificil is not None and dificil[0] == "adentro":
+                    self.problemas.append(f"{nombre}: en Difícil su código queda adentro de la prisión "
+                                          "y nadie sale solo de la celda: ponle notas SOLO DIFÍCIL "
+                                          "afuera (tecla F)")
+                for cosa, lista, res in (("nota_codigo", "notas", resultado),
+                                         ("nota_dificil", "notas_dificil", dificil)):
+                    for k in range(len(puerta.get(lista, []))):
+                        ident = (cosa, i, k)
+                        if ident not in self.pueden_tener_codigo:
+                            self.estado.setdefault(ident, "lejos")
+                            if res is not None and res[0] in ("codigo", "adentro"):
+                                self.problemas.append(
+                                    f"{nombre}, nota {'D' if cosa == 'nota_dificil' else ''}{k + 1}: "
+                                    "queda detrás de una puerta (nunca tendrá el código)")
+        if (self.puertas() or self.datos["consolas"]) and not self.datos.get("capsula"):
             self.problemas.append("Misión: falta la cápsula; sin ella no hay misión")
 
         if 0 < len(self.datos.get("pruebas", [])) < 3:
@@ -893,7 +1096,7 @@ class EditorMapa:
             # Los tramos que pasan por una puerta (la del código o una para dos)
             # no son un error: mientras está cerrada el alien patrulla solo su
             # lado, y cuando la abren usa la ruta entera. Se pintan en ámbar.
-            puertas = [r for r in [self.rect_puerta()] if r is not None]
+            puertas = self.rects_puertas()
             puertas += [self.rect_dict(d) for d in self.datos.get("puertas_dobles", [])]
             n = len(puntos)
             tramos = [(j, (j + 1) % n) for j in range(n)] if n > 2 else ([(0, 1)] if n == 2 else [])
@@ -910,6 +1113,11 @@ class EditorMapa:
         if key in TECLAS_HERRAMIENTA:
             self.herramienta = TECLAS_HERRAMIENTA.index(key)
             self.arrastre = None
+            self.notas_de_puerta = False
+        elif key == pygame.K_x and self.clave == "puertas_codigo":
+            self.alternar_notas_de_puerta()
+        elif key == pygame.K_f and self.clave == "puertas_codigo":
+            self.alternar_solo_dificil()
         elif ctrl and key == pygame.K_z:
             self.deshacer_uno()
         elif ctrl and key == pygame.K_y:
@@ -950,6 +1158,7 @@ class EditorMapa:
             paso = -1 if key == pygame.K_COMMA else 1
             self.herramienta = (self.herramienta + paso) % len(HERRAMIENTAS)
             self.arrastre = None
+            self.notas_de_puerta = False
         elif key == pygame.K_r:
             if confirmar == "r":
                 self.restaurar_herramienta()
@@ -1039,14 +1248,13 @@ class EditorMapa:
         s.fill(COLOR_FONDO)
         area = self.area_mapa
         s.set_clip(area)
-        s.blit(self._mapa_escalado(), (-self.cam[0], -self.cam[1]))
+        cx, cy = self._cam()
+        s.blit(self._mapa_escalado(), (-cx, -cy))
 
         if self.mostrar_paredes:
             capa = pygame.Surface(area.size, pygame.SRCALPHA)
             for pared in self.mundo.paredes:
-                x, y = self.a_pantalla(pared.topleft)
-                r = pygame.Rect(x, y, max(1, int(pared.width * self.zoom)),
-                                max(1, int(pared.height * self.zoom)))
+                r = self.rect_a_pantalla(pared)
                 pygame.draw.rect(capa, (*COLOR_MURO, 50), r)
                 pygame.draw.rect(capa, (*COLOR_MURO, 160), r, 1)
             s.blit(capa, (0, 0))
@@ -1061,7 +1269,7 @@ class EditorMapa:
 
         # Todo lo que es un punto o una lista de puntos.
         colores = {h["clave"]: h for h in HERRAMIENTAS}
-        for clave in CON_NOMBRE + LISTAS + ("capsula",):
+        for clave in CON_NOMBRE + LISTAS + ("capsula", "guardia", "planta"):
             herr = colores[clave]
             objetos = self.datos.get(clave)
             if clave in UNICOS:
@@ -1070,8 +1278,7 @@ class EditorMapa:
                 ident = ("unico", clave) if clave in UNICOS else (clave, i)
                 rect = self.rect_de(clave, self.posicion(clave, obj))
                 x, y = self.a_pantalla(rect.topleft)
-                r = pygame.Rect(x, y, max(4, int(rect.width * self.zoom)),
-                                max(4, int(rect.height * self.zoom)))
+                r = self.rect_a_pantalla(rect, 4)
                 estado = self.estado.get(ident) or self.estado.get((clave, i))
                 color = self._color(ident if ident in self.estado else (clave, i), herr["color"])
                 relleno = pygame.Surface(r.size, pygame.SRCALPHA)
@@ -1086,18 +1293,47 @@ class EditorMapa:
                         texto = herr["nombre"]
                     else:
                         texto = f"{NOMBRE_SINGULAR[clave]} {i + 1}"
-                        if clave == "notas" and i in getattr(self, "notas_codigo", ()):
+                        if (clave, i) in getattr(self, "pueden_tener_codigo", ()):
                             texto += " (código)"
                     self._etiqueta(texto, r.midtop, color)
 
-        # Puerta de la prisión.
-        puerta = self.rect_puerta()
-        if puerta is not None:
-            x, y = self.a_pantalla(puerta.topleft)
-            r = pygame.Rect(x, y, max(3, int(puerta.width * self.zoom)), max(3, int(puerta.height * self.zoom)))
-            pygame.draw.rect(s, colores["puerta"]["color"], r, 0 if not apagado("puerta") else 2)
-            if not apagado("puerta"):
-                self._etiqueta("Puerta", r.midtop, colores["puerta"]["color"])
+        # Puertas con código, cada una de su color, con sus notas de código
+        # (con su herramienta se ven fuertes y unidas a su puerta).
+        activa = not apagado("puertas_codigo")
+        for i, puerta in enumerate(self.puertas()):
+            nombre, color_p = color_puerta(i)
+            rect_p = self.rect_puerta(i)
+            r_p = self.rect_a_pantalla(rect_p, 3)
+            elegida = activa and i == self.puerta_elegida
+            notas = [("nota_codigo", k, punto) for k, punto in enumerate(puerta["notas"])]
+            notas += [("nota_dificil", k, punto) for k, punto in enumerate(puerta.get("notas_dificil", []))]
+            for cosa, k, punto in notas:
+                ident = (cosa, i, k)
+                solo_dificil = cosa == "nota_dificil"
+                rect = self.rect_de("notas_codigo", self.px(*punto))
+                r = self.rect_a_pantalla(rect, 4)
+                if activa:
+                    pygame.draw.line(s, color_p, r.center, r_p.center, 2 if elegida else 1)
+                relleno = pygame.Surface(r.size, pygame.SRCALPHA)
+                relleno.fill((*((70, 40, 40) if solo_dificil else colores["notas"]["color"]),
+                              130 if activa else 50))
+                s.blit(relleno, r.topleft)
+                estado = self.estado.get(ident)
+                color = self._color(ident, color_p)
+                pygame.draw.rect(s, color if estado else color_p, r, 3 if estado else (2 if activa else 1))
+                if solo_dificil:       # borde rojo punteado: solo en Difícil
+                    for x in range(r.x, r.right, 6):
+                        pygame.draw.line(s, (245, 90, 80), (x, r.bottom + 2), (min(x + 3, r.right), r.bottom + 2), 2)
+                pygame.draw.circle(s, color_p, (r.centerx, r.y), max(2, r.width // 5))
+                if activa or not apagado("notas"):
+                    marca = "D" if solo_dificil else ""
+                    self._etiqueta(f"{nombre[:3].capitalize()} {marca}{k + 1}", r.midtop, color)
+            pygame.draw.rect(s, color_p, r_p, 0 if activa else 2)
+            if elegida:
+                pygame.draw.rect(s, (255, 255, 255), r_p.inflate(6, 6), 2)
+            if activa:
+                que = " (fase 1)" if i == 0 else ""
+                self._etiqueta(f"Puerta {nombre}{que}", r_p.midtop, color_p)
 
         # Sellos de los paneles del Forjador.
         for i, obj in enumerate(self.datos.get("paneles", [])):
@@ -1105,7 +1341,7 @@ class EditorMapa:
                 continue
             rect = self.rect_dict(obj["sello"])
             x, y = self.a_pantalla(rect.topleft)
-            r = pygame.Rect(x, y, max(3, int(rect.width * self.zoom)), max(3, int(rect.height * self.zoom)))
+            r = self.rect_a_pantalla(rect, 3)
             color = (90, 200, 255)
             pygame.draw.rect(s, color, r, 0 if not apagado("paneles") else 2)
             pygame.draw.line(s, color, self.a_pantalla(self.px(obj["rx"], obj["ry"])), r.center, 1)
@@ -1118,7 +1354,7 @@ class EditorMapa:
             for i, obj in enumerate(self.datos.get(clave, [])):
                 rect = self.rect_dict(obj)
                 x, y = self.a_pantalla(rect.topleft)
-                r = pygame.Rect(x, y, max(3, int(rect.width * self.zoom)), max(3, int(rect.height * self.zoom)))
+                r = self.rect_a_pantalla(rect, 3)
                 pygame.draw.rect(s, color_base, r, 0 if not apagado(clave) else 2)
                 nombre = "Compuerta" if clave == "compuertas" else "Puerta x2"
                 if not apagado(clave):
@@ -1141,7 +1377,7 @@ class EditorMapa:
             for i, obj in enumerate(self.datos["salas"]):
                 rect = self.rect_dict(obj)
                 x, y = self.a_pantalla(rect.topleft)
-                r = pygame.Rect(x, y, max(3, int(rect.width * self.zoom)), max(3, int(rect.height * self.zoom)))
+                r = self.rect_a_pantalla(rect, 3)
                 tono = (sum(map(ord, obj["nombre"])) * 47) % 360
                 color = pygame.Color(0); color.hsva = (tono, 55, 100, 100)
                 pygame.draw.rect(capa, (color.r, color.g, color.b, 55), r)
@@ -1217,7 +1453,11 @@ class EditorMapa:
             clave = herr["clave"]
             if clave == "spawn":
                 cuenta = "puesto" if self.datos.get("spawn") else "centro"
-            elif clave in UNICOS or clave == "puerta":
+            elif clave == "puertas_codigo":
+                cuenta = (f"{len(self.puertas())}, {sum(len(p['notas']) for p in self.puertas())} notas"
+                          + (f" + {sum(len(p.get('notas_dificil', [])) for p in self.puertas())} D"
+                             if any(p.get("notas_dificil") for p in self.puertas()) else ""))
+            elif clave in UNICOS:
                 cuenta = "puesta" if self.datos.get(clave) else "no"
             elif clave in RECTS:
                 cuenta = str(len(self.datos.get(clave, [])))
@@ -1240,6 +1480,14 @@ class EditorMapa:
                   COLOR_TITULO, self.f_chica)
             tipo = TIPOS_ALIEN[self.tipo_de_ruta(self.ruta_elegida)]
             linea(f"Tipo: {tipo['nombre']} - {tipo['descripcion']}", COLOR_TITULO, self.f_chica)
+        if self.clave == "puertas_codigo":
+            if self.notas_de_puerta and self.puerta_elegida is not None and self.puerta_elegida < len(self.puertas()):
+                nombre = color_puerta(self.puerta_elegida)[0].upper()
+                cual = "SOLO DIFÍCIL " if self.notas_solo_dificil else ""
+                linea(f"Clic: NOTAS {cual}PUERTA {nombre} (X fin, F)",
+                      color_puerta(self.puerta_elegida)[1], self.f_chica)
+            else:
+                linea("Clic: pone otra puerta (clic en una: la elige)", COLOR_TITULO, self.f_chica)
         if self.clave == "salas":
             linea(f"Próxima sala: {self.nombre_sala}", COLOR_TITULO, self.f_chica)
             if self.escribiendo is not None:

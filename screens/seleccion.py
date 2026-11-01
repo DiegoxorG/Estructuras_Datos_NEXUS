@@ -53,7 +53,7 @@ def render_cantidad(screen, seleccionado):
     titulo = f_titulo.render("¿CUÁNTOS JUEGAN?", True, COLOR_TEXTO)
     screen.blit(titulo, titulo.get_rect(center=(ancho // 2, int(alto * 0.22))))
 
-    aviso = f.render("Todos en el mismo teclado, cada uno con su parte de la pantalla.",
+    aviso = f.render("Con teclado o con mando, cada uno con su parte de la pantalla.",
                      True, COLOR_TENUE)
     screen.blit(aviso, aviso.get_rect(center=(ancho // 2, int(alto * 0.22) + 46)))
 
@@ -106,7 +106,6 @@ DESCRIPCION = {
 # --------------------------------------------------------------------------
 
 COLOR_DIFICULTAD = {
-    "tutorial": (120, 190, 255),
     "facil": (96, 210, 120),
     "normal": (255, 214, 64),
     "dificil": (245, 110, 100),
@@ -115,7 +114,7 @@ COLOR_DIFICULTAD = {
 
 
 def render_dificultad(screen, seleccionado):
-    """Las cinco dificultades en columna y, abajo, qué cambia la elegida."""
+    """Las dificultades en columna y, abajo, qué cambia la elegida."""
     from data.dificultad import DIFICULTADES
     from screens.paneles import partir_lineas
     screen.fill(COLOR_FONDO)
@@ -167,6 +166,82 @@ def render_dificultad(screen, seleccionado):
 # --------------------------------------------------------------------------
 # Paso 2: qué rol juega cada uno
 # --------------------------------------------------------------------------
+
+BOTON_ESQUEMA = ["E", "Enter", "A", "A"]     # con qué se toma cada control
+
+
+def render_controles(screen, esquemas, nombres, libres, conectados):
+    """Cada jugador escoge su control presionando su botón de aceptar.
+
+    `esquemas`: el de cada jugador (None = todavía no); `nombres`: el nombre
+    de cada esquema; `libres`: los que se pueden escoger; `conectados`: si
+    cada esquema de mando tiene un mando conectado.
+    """
+    screen.fill(COLOR_FONDO)
+    ancho, alto = screen.get_size()
+    f_titulo = fuente_de_tamano(max(22, min(40, ancho // 38)))
+    f = fuente_de_tamano(max(15, min(24, ancho // 62)))
+    f_chica = fuente_de_tamano(max(13, min(19, ancho // 80)))
+    t = pygame.time.get_ticks()
+
+    titulo = f_titulo.render("¿CON QUÉ JUEGA CADA UNO?", True, COLOR_TEXTO)
+    screen.blit(titulo, titulo.get_rect(center=(ancho // 2, int(alto * 0.16))))
+    for i, linea in enumerate(("Cada jugador presiona el botón de su control, en orden.",
+                               "Presiónalo otra vez para soltarlo. Dos no pueden usar el mismo.")):
+        img = f_chica.render(linea, True, COLOR_TENUE)
+        screen.blit(img, img.get_rect(center=(ancho // 2, int(alto * 0.16) + 44 + i * (f_chica.get_linesize() + 2))))
+
+    # Un renglón por jugador.
+    ancho_caja = min(int(ancho * 0.56), 620)
+    alto_caja = f.get_linesize() + 22
+    y = int(alto * 0.33)
+    siguiente = esquemas.index(None) if None in esquemas else None
+    for jugador, esquema in enumerate(esquemas):
+        caja = pygame.Rect(0, 0, ancho_caja, alto_caja)
+        caja.midtop = (ancho // 2, y)
+        if esquema is not None:
+            pygame.draw.rect(screen, (34, 48, 40), caja)
+            pygame.draw.rect(screen, COLOR_LISTO, caja, 2)
+            derecha, color = nombres[esquema], COLOR_LISTO
+        elif jugador == siguiente:
+            pygame.draw.rect(screen, COLOR_SELECCION_FONDO, caja)
+            pygame.draw.rect(screen, COLOR_TITULO, caja, 2)
+            derecha = "presiona tu botón" + "." * (1 + (t // 400) % 3)
+            color = COLOR_TITULO
+        else:
+            pygame.draw.rect(screen, COLOR_BORDE, caja, 1)
+            derecha, color = "esperando", COLOR_TOMADO
+        izq = f.render(f"Jugador {jugador + 1}", True, COLOR_TEXTO)
+        screen.blit(izq, izq.get_rect(midleft=(caja.x + 18, caja.centery)))
+        der = f.render(derecha, True, color)
+        screen.blit(der, der.get_rect(midright=(caja.right - 18, caja.centery)))
+        y += alto_caja + 12
+
+    # Los controles: cuál está libre, tomado o sin conectar.
+    y += 26
+    ancho_ficha = min(int(ancho * 0.2), 230)
+    sep = 14
+    total = len(nombres) * ancho_ficha + (len(nombres) - 1) * sep
+    x = (ancho - total) // 2
+    for esquema, nombre in enumerate(nombres):
+        ficha = pygame.Rect(x, y, ancho_ficha, f.get_linesize() * 2 + 18)
+        if esquema in esquemas:
+            estado, color, borde = f"Jugador {esquemas.index(esquema) + 1}", COLOR_LISTO, COLOR_LISTO
+        elif esquema in libres:
+            estado, color, borde = f"[{BOTON_ESQUEMA[esquema]}] tomar", (194, 216, 248), COLOR_BORDE
+        else:
+            estado, color, borde = "sin conectar", COLOR_TOMADO, COLOR_TOMADO
+        pygame.draw.rect(screen, (24, 26, 44), ficha)
+        pygame.draw.rect(screen, borde, ficha, 2)
+        img = f.render(nombre, True, COLOR_TEXTO if esquema in libres else COLOR_TOMADO)
+        screen.blit(img, img.get_rect(midtop=(ficha.centerx, ficha.y + 8)))
+        img = f_chica.render(estado, True, color)
+        screen.blit(img, img.get_rect(midtop=(ficha.centerx, ficha.y + 12 + f.get_linesize())))
+        x += ancho_ficha + sep
+
+    pie = f_chica.render("[ESC] o B: volver a la dificultad", True, (194, 216, 248))
+    screen.blit(pie, pie.get_rect(center=(ancho // 2, alto - 40)))
+
 
 def render_roles(screen, viewports, seleccion):
     """Dibuja la selección de rol de cada jugador en su propia sección.
@@ -309,15 +384,24 @@ def _confirmado(screen, vista, f, y, estado):
     if rol is None:
         return
 
-    caja = pygame.Rect(vista.x + MARGEN, y, int(vista.width * 0.62) - MARGEN, paso * 3 + 16)
+    from screens.paneles import partir_lineas
+    # El retrato va a la derecha: la caja usa lo que queda, y el objetivo se
+    # parte en renglones para que no se salga (antes iba en uno solo).
+    imagen = _retrato(rol["nombre"], max(40, min(190, vista.height // 3)))
+    libre = vista.right - MARGEN - (imagen.get_width() + 16 if imagen is not None else 0)
+    derecha = min(vista.x + int(vista.width * 0.62), libre)
+    ancho = max(120, derecha - (vista.x + MARGEN))
+    renglones = partir_lineas(rol["objetivo"], f, ancho - 24)
+    caja = pygame.Rect(vista.x + MARGEN, y, ancho, paso * (2 + len(renglones)) + 16)
     pygame.draw.rect(screen, (34, 48, 40), caja)
     pygame.draw.rect(screen, COLOR_LISTO, caja, 2)
 
     y += 10
     screen.blit(f.render(rol["nombre"], True, rol["color"]), (caja.x + 12, y))
     y += paso
-    screen.blit(f.render(rol["objetivo"], True, COLOR_TEXTO), (caja.x + 12, y))
-    y += paso
+    for renglon in renglones:
+        screen.blit(f.render(renglon, True, COLOR_TEXTO), (caja.x + 12, y))
+        y += paso
     screen.blit(f.render("Listo", True, COLOR_LISTO), (caja.x + 12, y))
 
     pie = f.render(f"[{estado['tecla_ok']}] cambiar", True, (194, 216, 248))

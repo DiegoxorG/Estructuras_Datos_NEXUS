@@ -8,6 +8,16 @@ import copy
 PANEL_W = 230   # right sidebar width
 STATUS_H = 36   # bottom status bar height
 
+# Las coordenadas del editor son las del JUEGO (la imagen original por
+# mundo.ESCALA_MAPA), y los rectángulos se guardan pegados a los píxeles de la
+# imagen original (múltiplos de PIXEL_MUNDO): así el juego los pone
+# exactamente donde se ven aquí (int(rx * ancho) da un entero exacto).
+PIXEL_MUNDO = 1
+# Niveles de zoom: cuántos píxeles de pantalla mide un píxel de la imagen
+# original. Desde 1 son enteros: cada píxel del dibujo es un cuadro exacto
+# y los bordes de las hitboxes coinciden con los del dibujo.
+ZOOMS_PIXEL = [0.25, 0.33, 0.5, 0.75, 1, 2, 3, 4, 6, 8, 12]
+
 # ── Helper functions ──────────────────────────────────────────────────────────
 
 def load_image(path):
@@ -22,21 +32,30 @@ def clamp_rect_to_image(rect, img_rect):
     return pygame.Rect(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
 
 
+def _al_pixel(v):
+    """Redondea al borde de píxel de la imagen original más cercano."""
+    return int(round(v / PIXEL_MUNDO)) * PIXEL_MUNDO
+
+
 def normalize_rect(rect, img_rect):
+    x0, y0 = _al_pixel(rect.x - img_rect.x), _al_pixel(rect.y - img_rect.y)
+    x1, y1 = _al_pixel(rect.right - img_rect.x), _al_pixel(rect.bottom - img_rect.y)
+    x1, y1 = max(x1, x0 + PIXEL_MUNDO), max(y1, y0 + PIXEL_MUNDO)
     return {
-        "rx": (rect.x - img_rect.x) / img_rect.width,
-        "ry": (rect.y - img_rect.y) / img_rect.height,
-        "rw": rect.width / img_rect.width,
-        "rh": rect.height / img_rect.height,
+        "rx": x0 / img_rect.width,
+        "ry": y0 / img_rect.height,
+        "rw": (x1 - x0) / img_rect.width,
+        "rh": (y1 - y0) / img_rect.height,
     }
 
 
 def denormalize_rect(data, img_rect):
+    # Igual que el juego (Mundo._cargar_hitboxes): int() de cada valor.
     return pygame.Rect(
         img_rect.x + int(data["rx"] * img_rect.width),
         img_rect.y + int(data["ry"] * img_rect.height),
-        int(data["rw"] * img_rect.width),
-        int(data["rh"] * img_rect.height),
+        max(1, int(data["rw"] * img_rect.width)),
+        max(1, int(data["rh"] * img_rect.height)),
     )
 
 
@@ -414,11 +433,20 @@ def main():
     max_w, max_h = 1600, 950
     fit_scale = min(max_w / iw, max_h / ih, 1.0)
     view_w = int(iw * fit_scale)
-    view_h = int(ih * fit_scale)
-    zoom_factor = 1.35
-    world_w = max(view_w, int(view_w * zoom_factor))
-    world_h = max(view_h, int(view_h * zoom_factor))
-    image_view = pygame.transform.smoothscale(raw_image, (world_w, world_h))
+    # Antes el mundo del editor era la imagen reescalada a ~1300 px (con
+    # bordes que no caían en los píxeles del dibujo). Ahora es el mundo del
+    # juego; U pasa los tamaños fijos de antes (sitios de NPC, decoración,
+    # tolerancias) a la escala nueva para que se sientan igual.
+    global PIXEL_MUNDO
+    try:
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        from juego.mundo import ESCALA_MAPA
+    except Exception:
+        ESCALA_MAPA = 3
+    PIXEL_MUNDO = ESCALA_MAPA
+    world_w, world_h = iw * ESCALA_MAPA, ih * ESCALA_MAPA
+    U = world_w / max(1, int(view_w * 1.35))
 
     padding = 20
     ui_h = 180
@@ -428,7 +456,7 @@ def main():
 
     screen = pygame.display.set_mode((win_w, win_h), pygame.NOFRAME)
     pygame.display.set_caption("Editor de Hitboxes")
-    image_view = image_view.convert()
+    raw_image = raw_image.convert()
 
     font = pygame.font.SysFont("consolas", 20)
     small = pygame.font.SysFont("consolas", 16)
@@ -459,29 +487,105 @@ def main():
     panel_rect = pygame.Rect(panel_x, 0, PANEL_W, win_h - STATUS_H)
     status_rect_layout = pygame.Rect(0, win_h - STATUS_H, win_w, STATUS_H)
     world_rect = pygame.Rect(0, 0, world_w, world_h)
-    camera_x = 0
-    camera_y = 0
+    camera_x = 0.0
+    camera_y = 0.0
+
+    # ── Zoom ──────────────────────────────────────────────────────────────────
+    # zoom = píxeles de pantalla por unidad del mundo (del juego). Los niveles
+    # salen de ZOOMS_PIXEL (pantalla por píxel de la imagen original), más uno
+    # que deja ver el mapa entero.
+    cabe = min(viewport_w / world_w, viewport_h / world_h)
+    niveles_zoom = sorted({cabe} | {k / ESCALA_MAPA for k in ZOOMS_PIXEL if k / ESCALA_MAPA > cabe})
+    # Al abrir: como antes (el mapa un poco más grande que la ventana).
+    zoom_i = min(range(len(niveles_zoom)), key=lambda i: abs(niveles_zoom[i] - cabe * 1.35))
+    zoom = niveles_zoom[zoom_i]
+    mapa_cache = {}       # zoom -> mapa entero escalado (solo para zooms chicos)
 
     def clamp_camera():
+        """La cámara (esquina del viewport, en el mundo) siempre en un píxel
+        entero de pantalla: así el dibujo y las hitboxes no se corren."""
         nonlocal camera_x, camera_y
-        camera_x = max(0, min(camera_x, max(0, world_rect.width - viewport_rect.width)))
-        camera_y = max(0, min(camera_y, max(0, world_rect.height - viewport_rect.height)))
+        vista_w, vista_h = viewport_rect.width / zoom, viewport_rect.height / zoom
+        if world_rect.width <= vista_w:
+            camera_x = (world_rect.width - vista_w) / 2
+        else:
+            camera_x = max(0, min(camera_x, world_rect.width - vista_w))
+        if world_rect.height <= vista_h:
+            camera_y = (world_rect.height - vista_h) / 2
+        else:
+            camera_y = max(0, min(camera_y, world_rect.height - vista_h))
+        camera_x = round(camera_x * zoom) / zoom
+        camera_y = round(camera_y * zoom) / zoom
 
     def center_camera_on_rect(rect):
         nonlocal camera_x, camera_y
-        camera_x = rect.centerx - viewport_rect.width // 2
-        camera_y = rect.centery - viewport_rect.height // 2
+        camera_x = rect.centerx - viewport_rect.width / zoom / 2
+        camera_y = rect.centery - viewport_rect.height / zoom / 2
         clamp_camera()
 
     def screen_to_world(pos):
         sx, sy = pos
         if not viewport_rect.collidepoint(sx, sy):
             return None
-        return (sx - viewport_rect.x + camera_x, sy - viewport_rect.y + camera_y)
+        return (int(math.floor((sx - viewport_rect.x) / zoom + camera_x)),
+                int(math.floor((sy - viewport_rect.y) / zoom + camera_y)))
 
     def world_to_screen(pos):
         wx, wy = pos
-        return (wx - camera_x + viewport_rect.x, wy - camera_y + viewport_rect.y)
+        return ((wx - camera_x) * zoom + viewport_rect.x, (wy - camera_y) * zoom + viewport_rect.y)
+
+    def rect_to_screen(rect):
+        """Un Rect del mundo en la pantalla, redondeando las dos esquinas (no
+        el ancho): así dos rects pegados en el mundo quedan pegados aquí."""
+        x0, y0 = world_to_screen(rect.topleft)
+        x1, y1 = world_to_screen(rect.bottomright)
+        x0, y0, x1, y1 = round(x0), round(y0), round(x1), round(y1)
+        return pygame.Rect(x0, y0, max(1, x1 - x0), max(1, y1 - y0))
+
+    def set_zoom(nuevo_i, ancla=None):
+        """Cambia el zoom dejando quieto el punto del mundo bajo `ancla`
+        (posición en pantalla; por defecto el centro del viewport)."""
+        nonlocal zoom_i, zoom, camera_x, camera_y
+        nuevo_i = max(0, min(len(niveles_zoom) - 1, nuevo_i))
+        if nuevo_i == zoom_i:
+            return
+        if ancla is None or not viewport_rect.collidepoint(ancla):
+            ancla = viewport_rect.center
+        wx = (ancla[0] - viewport_rect.x) / zoom + camera_x
+        wy = (ancla[1] - viewport_rect.y) / zoom + camera_y
+        zoom_i, zoom = nuevo_i, niveles_zoom[nuevo_i]
+        camera_x = wx - (ancla[0] - viewport_rect.x) / zoom
+        camera_y = wy - (ancla[1] - viewport_rect.y) / zoom
+        clamp_camera()
+
+    def draw_map():
+        """El dibujo del mapa en el viewport. Con zoom chico se escala el mapa
+        entero una vez (suave); con zoom grande, solo el pedazo que se ve y
+        con vecino más cercano (cada píxel del dibujo, un cuadro exacto)."""
+        k = zoom * ESCALA_MAPA            # píxeles de pantalla por píxel de la imagen
+        prev_clip = screen.get_clip()
+        screen.set_clip(viewport_rect)
+        if k < 1 or abs(k - round(k)) > 1e-6:      # zoom chico o no entero: el mapa entero, una vez
+            if zoom not in mapa_cache:
+                mapa_cache.clear()
+                mapa_cache[zoom] = pygame.transform.smoothscale(
+                    raw_image, (max(1, round(iw * k)), max(1, round(ih * k))))
+            ox, oy = world_to_screen((0, 0))
+            screen.blit(mapa_cache[zoom], (round(ox), round(oy)))
+        else:
+            x0 = max(0, int(math.floor(camera_x / ESCALA_MAPA)))
+            y0 = max(0, int(math.floor(camera_y / ESCALA_MAPA)))
+            x1 = min(iw, int(math.ceil((camera_x + viewport_rect.width / zoom) / ESCALA_MAPA)) + 1)
+            y1 = min(ih, int(math.ceil((camera_y + viewport_rect.height / zoom) / ESCALA_MAPA)) + 1)
+            if x1 > x0 and y1 > y0:
+                kk = int(round(k))
+                pedazo = raw_image.subsurface(pygame.Rect(x0, y0, x1 - x0, y1 - y0))
+                img = pygame.transform.scale(pedazo, ((x1 - x0) * kk, (y1 - y0) * kk))
+                ox, oy = world_to_screen((x0 * ESCALA_MAPA, y0 * ESCALA_MAPA))
+                screen.blit(img, (round(ox), round(oy)))
+        screen.set_clip(prev_clip)
+
+    clamp_camera()
 
     # ── Available backgrounds ─────────────────────────────────────────────────
     images_dir = os.path.join(project_root, "Imagenes", "Fondos")
@@ -517,10 +621,11 @@ def main():
     current_file_name = os.path.basename(image_path)
     if current_file_name in available_backgrounds:
         current_target_bg_idx = available_backgrounds.index(current_file_name)
-    current_line_thickness_px = 8
+    current_line_thickness_px = max(1, round(8 * U))
     test_mode = False
     test_speed = 4
     test_player = pygame.Rect(0, 0, 28, 28)  # su tamaño real lo fija hb_template
+    test_speed = 4   # como Personaje(velocidad=4) en el juego: el mundo es el del juego
 
     # ── Display options ───────────────────────────────────────────────────────
     show_walls = True
@@ -555,8 +660,8 @@ def main():
     pending_spawn_rect = None
     npc_positions = {}
     selected_npc_name = "sara"
-    npc_default_site_w = 96
-    npc_default_site_h = 96
+    npc_default_site_w = round(96 * U)
+    npc_default_site_h = round(96 * U)
 
     def clamp_spawn_rect():
         nonlocal spawn_rect
@@ -674,7 +779,7 @@ def main():
             if not isinstance(data, dict):
                 continue
             nx, ny = _denormalize_world_point(data)
-            if math.hypot(world_pos[0] - nx, world_pos[1] - ny) <= 24:
+            if math.hypot(world_pos[0] - nx, world_pos[1] - ny) <= 24 * U:
                 del npc_positions[npc_name]
                 spawn_status_message = f"{npc_name.capitalize()} eliminado."
                 spawn_status_timer = 180
@@ -852,7 +957,7 @@ def main():
         frames = detect_sprite_frames(obj_img)
         iw, ih = obj_img.get_size()
         fw = iw // frames          # ancho de un solo frame
-        s  = min(96 / max(fw, ih), 1.0)
+        s  = min(96 * U / max(fw, ih), U)
         return max(MIN_DECO, int(fw * s)), max(MIN_DECO, int(ih * s))
 
     def get_placement_size(obj_name, obj_img):
@@ -1283,6 +1388,7 @@ def main():
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     running = True
+    arrastre_camara = None     # (x, y del mouse, cámara) mientras se arrastra con el botón del medio
     while running:
         clock.tick(60)
         fps = clock.get_fps()
@@ -1394,6 +1500,19 @@ def main():
                 if panel_rect.collidepoint(mouse_pos_screen):
                     panel_scroll = max(0, panel_scroll - event.y * PANEL_ROW_H)
                     continue
+                # ── Zoom con la rueda, alrededor del mouse ────────────────────
+                if viewport_rect.collidepoint(mouse_pos_screen) and event.y:
+                    set_zoom(zoom_i + (1 if event.y > 0 else -1), mouse_pos_screen)
+                    continue
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 2 and viewport_rect.collidepoint(event.pos):
+                arrastre_camara = (event.pos[0], event.pos[1], camera_x, camera_y)
+                continue
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 2:
+                arrastre_camara = None
+                continue
+            if event.type == pygame.KEYDOWN and event.key in (pygame.K_0, pygame.K_KP0) and not test_mode:
+                set_zoom(0)           # el mapa entero
+                continue
 
             # ── Panel click ───────────────────────────────────────────────────
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -1530,7 +1649,7 @@ def main():
                                 y1 = world_rect.y + h["y1"] * world_rect.height
                                 x2 = world_rect.x + h["x2"] * world_rect.width
                                 y2 = world_rect.y + h["y2"] * world_rect.height
-                                hit = point_to_line_distance(world_pos, (x1, y1), (x2, y2)) <= line_thickness_px(h, world_rect) / 2 + 4
+                                hit = point_to_line_distance(world_pos, (x1, y1), (x2, y2)) <= line_thickness_px(h, world_rect) / 2 + 4 * U
                             if hit:
                                 hitboxes.pop(idx)
                                 if selected_hitbox_idx == idx:
@@ -1966,33 +2085,38 @@ def main():
             center_camera_on_rect(test_player)
         else:
             keys = pygame.key.get_pressed()
-            cam_speed = 10
+            cam_speed = 10 / zoom          # 10 px de pantalla por cuadro, con cualquier zoom
             camera_x += ((1 if keys[pygame.K_d] else 0) - (1 if keys[pygame.K_a] else 0)) * cam_speed
             camera_y += ((1 if keys[pygame.K_s] else 0) - (1 if keys[pygame.K_w] else 0)) * cam_speed
+            if arrastre_camara is not None:
+                mx, my = pygame.mouse.get_pos()
+                camera_x = arrastre_camara[2] - (mx - arrastre_camara[0]) / zoom
+                camera_y = arrastre_camara[3] - (my - arrastre_camara[1]) / zoom
             clamp_camera()
 
         # ── RENDER ────────────────────────────────────────────────────────────
         screen.fill((28, 28, 34))
 
         # Clip rendering to viewport
-        camera_view = pygame.Rect(camera_x, camera_y, viewport_rect.width, viewport_rect.height)
-        screen.blit(image_view, viewport_rect.topleft, area=camera_view)
+        draw_map()
+        prev_clip_vista = screen.get_clip()
+        screen.set_clip(viewport_rect)
 
         # Grid overlay
         if grid_snap:
             step_x = max(1, int(GRID_SIZE * world_rect.width))
             step_y = max(1, int(GRID_SIZE * world_rect.height))
             grid_col = (55, 55, 70)
-            start_wx = (camera_x // step_x) * step_x
+            start_wx = int(camera_x // step_x) * step_x
             wx = start_wx
-            while wx <= camera_x + viewport_rect.width:
-                sx = wx - camera_x + viewport_rect.x
+            while wx <= camera_x + viewport_rect.width / zoom:
+                sx = round(world_to_screen((wx, 0))[0])
                 pygame.draw.line(screen, grid_col, (sx, viewport_rect.y), (sx, viewport_rect.bottom), 1)
                 wx += step_x
-            start_wy = (camera_y // step_y) * step_y
+            start_wy = int(camera_y // step_y) * step_y
             wy = start_wy
-            while wy <= camera_y + viewport_rect.height:
-                sy = wy - camera_y + viewport_rect.y
+            while wy <= camera_y + viewport_rect.height / zoom:
+                sy = round(world_to_screen((0, wy))[1])
                 pygame.draw.line(screen, grid_col, (viewport_rect.x, sy), (viewport_rect.right, sy), 1)
                 wy += step_y
 
@@ -2002,7 +2126,8 @@ def main():
                 obj_img = load_object_image(obj["name"])
                 if obj_img:
                     r = get_deco_world_rect(obj)
-                    sx, sy = world_to_screen((r.x, r.y))
+                    sr = rect_to_screen(r)
+                    sx, sy = sr.topleft
                     frames = int(obj.get("frames", 1))
                     if frames > 1:
                         # Spritesheet animado: w ya es 1 frame → subsurface + escalar a r.width×r.height
@@ -2011,12 +2136,11 @@ def main():
                         ih = obj_img.get_height()
                         fw = max(1, iw // frames)
                         frame_surf = obj_img.subsurface(pygame.Rect(frame_idx * fw, 0, fw, ih))
-                        scaled = pygame.transform.smoothscale(frame_surf, (r.width, r.height))
+                        scaled = pygame.transform.smoothscale(frame_surf, sr.size)
                     else:
                         source_img = get_cropped_deco_image(obj, obj_img)
-                        scaled = pygame.transform.smoothscale(source_img, (r.width, r.height))
+                        scaled = pygame.transform.smoothscale(source_img, sr.size)
                     screen.blit(scaled, (sx, sy))
-                    sr = pygame.Rect(sx, sy, r.width, r.height)
                     border_col = (255, 235, 80) if selected_deco_idx == j else (80, 220, 100)
                     pygame.draw.rect(screen, border_col, sr, 2 if selected_deco_idx != j else 3)
                     if show_labels:
@@ -2031,8 +2155,7 @@ def main():
             preview = make_deco_crop_rect_from_points(deco_crop_start, deco_crop_current)
             if selected_deco_idx is not None and 0 <= selected_deco_idx < len(decoracion):
                 preview = preview.clip(get_deco_world_rect(decoracion[selected_deco_idx]))
-            psx, psy = world_to_screen((preview.x, preview.y))
-            screen_preview = pygame.Rect(psx, psy, preview.width, preview.height)
+            screen_preview = rect_to_screen(preview)
             if screen_preview.width > 0 and screen_preview.height > 0:
                 dim = pygame.Surface((screen_preview.width, screen_preview.height), pygame.SRCALPHA)
                 dim.fill((255, 235, 120, 50))
@@ -2057,7 +2180,7 @@ def main():
                     source = obj_img.subsurface(pygame.Rect(fidx * fwp, 0, fwp, ih))
                 else:
                     source = obj_img
-                prev = pygame.transform.smoothscale(source, (ow, oh)).copy()
+                prev = pygame.transform.smoothscale(source, rect_to_screen(pygame.Rect(px, py, ow, oh)).size).copy()
                 prev.set_alpha(100)
                 screen.blit(prev, (sx, sy))
 
@@ -2075,7 +2198,7 @@ def main():
 
             if h["type"] == "rect":
                 r = denormalize_rect(h, world_rect)
-                sr = r.move(-camera_x + viewport_rect.x, -camera_y + viewport_rect.y)
+                sr = rect_to_screen(r)
                 pygame.draw.rect(screen, color, sr, 2)
                 if is_selected:
                     pygame.draw.rect(screen, (255, 255, 255), sr, 4)
@@ -2112,7 +2235,7 @@ def main():
             elif h["type"] == "circle":
                 cx = world_rect.x + h["cx"] * world_rect.width
                 cy = world_rect.y + h["cy"] * world_rect.height
-                rr = h["r"] * world_rect.width
+                rr = h["r"] * world_rect.width * zoom
                 sx, sy = world_to_screen((cx, cy))
                 pygame.draw.circle(screen, color, (int(sx), int(sy)), int(rr), 2)
                 if is_selected:
@@ -2143,7 +2266,7 @@ def main():
                 y2 = world_rect.y + h["y2"] * world_rect.height
                 sx1, sy1 = world_to_screen((x1, y1))
                 sx2, sy2 = world_to_screen((x2, y2))
-                thickness = line_thickness_px(h, world_rect)
+                thickness = max(1, round(line_thickness_px(h, world_rect) * zoom))
                 pygame.draw.line(screen, color, (sx1, sy1), (sx2, sy2), thickness)
                 if is_selected:
                     pygame.draw.line(screen, (255, 255, 255), (sx1, sy1), (sx2, sy2),
@@ -2155,23 +2278,22 @@ def main():
 
         # Dragging preview
         if current_rect is not None:
-            pr = clamp_rect_to_image(current_rect, world_rect)
-            pr = pr.move(-camera_x + viewport_rect.x, -camera_y + viewport_rect.y)
+            pr = rect_to_screen(clamp_rect_to_image(current_rect, world_rect))
             pygame.draw.rect(screen, (120, 200, 255), pr, 2)
         elif dragging and current_shape == "circle" and mouse_world:
             dx = mouse_world[0] - start_pos[0]
             dy = mouse_world[1] - start_pos[1]
-            rr = math.hypot(dx, dy)
+            rr = math.hypot(dx, dy) * zoom
             ss = world_to_screen(start_pos)
             pygame.draw.circle(screen, (120, 200, 255), (int(ss[0]), int(ss[1])), int(rr), 2)
         elif dragging and current_shape == "line" and mouse_world:
             ss = world_to_screen(start_pos)
             sm = world_to_screen(mouse_world)
-            pygame.draw.line(screen, (120, 200, 255), ss, sm, current_line_thickness_px)
+            pygame.draw.line(screen, (120, 200, 255), ss, sm, max(1, round(current_line_thickness_px * zoom)))
 
         # Test player
         if test_mode:
-            tv = test_player.move(-camera_x + viewport_rect.x, -camera_y + viewport_rect.y)
+            tv = rect_to_screen(test_player)
             pygame.draw.rect(screen, (255, 190, 90), tv, 2)
 
         # Spawn markers
@@ -2179,7 +2301,7 @@ def main():
             d = spawn_rules["default"]
             dr = pygame.Rect(int(d["rx"] * world_rect.width), int(d["ry"] * world_rect.height),
                              spawn_rect.width, spawn_rect.height)
-            dr = dr.move(-camera_x + viewport_rect.x, -camera_y + viewport_rect.y)
+            dr = rect_to_screen(dr)
             pygame.draw.rect(screen, (255, 90, 90), dr, 2)
             if show_labels:
                 screen.blit(small.render("Spawn:default", True, (255, 120, 120)),
@@ -2189,7 +2311,7 @@ def main():
                 continue
             sr = pygame.Rect(int(sdata["rx"] * world_rect.width), int(sdata["ry"] * world_rect.height),
                              spawn_rect.width, spawn_rect.height)
-            sr = sr.move(-camera_x + viewport_rect.x, -camera_y + viewport_rect.y)
+            sr = rect_to_screen(sr)
             pygame.draw.rect(screen, (255, 180, 70), sr, 2)
             if show_labels:
                 screen.blit(small.render(f"Spawn:{origin_name[:18]}", True, (255, 210, 120)),
@@ -2203,7 +2325,7 @@ def main():
             site_w = max(24, int(float(data.get("rw", npc_default_site_w / world_rect.width)) * world_rect.width))
             site_h = max(24, int(float(data.get("rh", npc_default_site_h / world_rect.height)) * world_rect.height))
             sx, sy = world_to_screen((nx, ny))
-            npc_sr = pygame.Rect(0, 0, site_w, site_h)
+            npc_sr = pygame.Rect(0, 0, max(4, round(site_w * zoom)), max(4, round(site_h * zoom)))
             npc_sr.center = (int(sx), int(sy))
             pygame.draw.rect(screen, (255, 120, 200), npc_sr, 1)
             pygame.draw.circle(screen, (255, 80, 170), (int(sx), int(sy)), 10, 2)
@@ -2214,11 +2336,18 @@ def main():
                             (int(sx) + 12, int(sy) - 12))
 
         if pending_spawn_rect is not None:
-            pv = pending_spawn_rect.move(-camera_x + viewport_rect.x, -camera_y + viewport_rect.y)
+            pv = rect_to_screen(pending_spawn_rect)
             pygame.draw.rect(screen, (255, 255, 0), pv, 2)
             screen.blit(small.render("Spawn pendiente", True, (255, 255, 140)), (pv.x, pv.y - 16))
 
+        screen.set_clip(prev_clip_vista)
         pygame.draw.rect(screen, (235, 235, 235), viewport_rect, 2)
+        # Zoom actual (píxeles de pantalla por píxel del dibujo).
+        k_zoom = zoom * ESCALA_MAPA
+        txt_zoom = small.render(f"Zoom {k_zoom:.2f}x  (rueda / 0 / clic del medio arrastra)", True, (220, 220, 235))
+        caja_zoom = txt_zoom.get_rect(topright=(viewport_rect.right - 8, viewport_rect.y + 8))
+        pygame.draw.rect(screen, (20, 20, 28), caja_zoom.inflate(10, 6))
+        screen.blit(txt_zoom, caja_zoom)
 
         # ── Right panel ───────────────────────────────────────────────────────
         pygame.draw.rect(screen, (35, 35, 48), panel_rect)

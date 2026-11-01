@@ -420,6 +420,58 @@ class Navegacion:
             puntos.append((int(hasta[0]), int(hasta[1])))
         return self.estirar(puntos), es_parcial, explorados
 
+    def distancia_camino(self, desde, hasta, max_px, sellos=True):
+        """Lo que mide el camino más corto de `desde` a `hasta` (en px), o None
+        si no hay o si es más largo que `max_px`. Un A* con tope: no recorre
+        más allá de `max_px`, así preguntar "¿llego sin dar la vuelta a media
+        nave?" sale barato aunque la respuesta sea que no."""
+        estado = self._estado(sellos)
+        tapadas, libre = estado["tapadas"], self.libre
+
+        def ok(c):
+            return c in libre and c not in tapadas
+
+        inicio = self._mas_cercana(desde, ok)
+        meta = self._mas_cercana(hasta, ok)
+        if inicio is None or meta is None or self._zona(estado, inicio) != self._zona(estado, meta):
+            return None
+        p = self.paso
+        tope = max_px / p
+        mx, my = meta
+        resta = 1.4142 - 2
+
+        def estimado(c):
+            ex, ey = abs(c[0] - mx) / p, abs(c[1] - my) / p
+            return (ex + ey) + resta * (ex if ex < ey else ey)
+
+        if estimado(inicio) > tope:
+            return None
+        vecinos = self._vecinos()
+        costo = {inicio: 0.0}
+        abiertos = [(estimado(inicio), 0, inicio)]
+        cerradas, orden = set(), 0
+        while abiertos:
+            _, _, c = heapq.heappop(abiertos)
+            if c in cerradas:
+                continue
+            if c == meta:
+                return costo[c] * p
+            cerradas.add(c)
+            base = costo[c]
+            for v, paso, esquinas in vecinos[c]:
+                if v in cerradas:
+                    continue
+                if tapadas and (v in tapadas or (esquinas and (esquinas[0] in tapadas
+                                                               or esquinas[1] in tapadas))):
+                    continue
+                nuevo = base + paso
+                total = nuevo + estimado(v)
+                if total <= tope and nuevo < costo.get(v, 1e18):
+                    costo[v] = nuevo
+                    orden += 1
+                    heapq.heappush(abiertos, (total, orden, v))
+        return None
+
     def libre_entre(self, a, b):
         """¿El alien entero cabe por la línea recta de `a` a `b`?
 

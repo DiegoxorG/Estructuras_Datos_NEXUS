@@ -46,6 +46,8 @@ con el mismo nombre (.ogg, .wav o .mp3) y el juego lo usa (audio_manager.py).
                      chillido y zarpazo
     captura_vigia    te atrapó el Vigía: pitidos de "fijando blanco" cada vez
                      más seguidos y un acorde eléctrico
+    captura_sombra   te alcanzó la Sombra: un susurro que crece, silencio y un
+                     chasquido de dientes con un golpe grave
 """
 
 import math
@@ -277,7 +279,7 @@ def generar_cambiaformas():
 
 def generar_sustos_aliens():
     """Un susto por tipo de alien (ambiente.py), distinto del "captura" de
-    siempre, que queda para el Rastreador. Con su propio azar, para no
+    siempre, que queda de respaldo. Con su propio azar, para no
     cambiar los otros sonidos.
 
         python -c "import sys; sys.path.insert(0, 'Audio'); import generar_sonidos as g; g.generar_sustos_aliens()"
@@ -327,6 +329,19 @@ def generar_sustos_aliens():
                                    tono(932, 0.55, 0.25, "saw", caida=0.25, f_final=700),
                                    tono(44, 0.55, 0.9, caida=0.25))
     guardar("captura_vigia", mezclar(*pitidos, acorde), 0.95)
+
+    # Sombra: un susurro que crece (sílabas que no se entienden), un instante
+    # de silencio y el chasquido de dientes con un golpe grave.
+    susurro = []
+    for i, v in enumerate(soplo(0.55, 1.0, 2)):
+        t = i / FRECUENCIA
+        silabas = max(0.0, math.sin(math.pi * t * 9)) ** 2
+        susurro.append(v * (0.3 + 0.7 * silabas) * (t / 0.55 + 0.2))
+    chasquido = silencio(0.62) + mezclar(soplo(0.05, 1.0, 1, subida=False),
+                                          tono(2400, 0.05, 0.4, "square", caida=0.02))
+    golpe = silencio(0.62) + mezclar(tono(38, 0.6, 1.0, caida=0.25),
+                                     tono(150, 0.45, 0.4, "saw", caida=0.18, f_final=70))
+    guardar("captura_sombra", mezclar(susurro, chasquido, golpe), 0.95)
 
 
 if __name__ == "__main__":

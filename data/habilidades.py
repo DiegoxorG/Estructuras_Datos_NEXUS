@@ -135,7 +135,8 @@ RESONANTE = {
     "descripcion": ("Le permite percibir, interpretar y trabajar con múltiples "
                     "señales que circulan por la nave."),
     "costo": 0,
-    "detalle_puntos": "Flechas en el borde de su pantalla hacia los aliens que no ve.",
+    "detalle_puntos": ("Flechas en el borde de su pantalla hacia los aliens que no ve, y "
+                       "los pasos (rosados) de los que tiene cerca pero no ve."),
     "uso": "pasiva",
     "hijos": [
         {

@@ -38,7 +38,7 @@ def nueva_partida():
     g._manejar_tecla(pygame.K_RETURN); avanzar(); g.current_screen = "roles"
     g._manejar_tecla(pygame.K_e); g._manejar_tecla(pygame.K_RETURN)
     avanzar(); g.current_screen = "partida"
-    g.tutorial.activo = False; g._terminar_tutorial()
+    g.saltar_tutorial()
     g.mision.abrir_puerta()
     for a in g.aliens:
         a.hitbox.topleft = (5, 5)

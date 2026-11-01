@@ -19,7 +19,7 @@ se vea más fuerte:
   oscuridad y de golpe aparece su cara; el **Cazador** (el rápido) cruza la
   pantalla a toda velocidad, con estela y líneas de velocidad, y te da un
   zarpazo; el **Vigía** (el que ve lejos) te barre con su haz de luz, la mira
-  se cierra sobre ti y se pone roja. El Rastreador (sin arte todavía) usa el
+  se cierra sobre ti y se pone roja. Si falta el arte de un alien, se usa el
   de siempre: destello rojo y una cara verde.
 
 Los sonidos se piden por nombre a audio_manager; si no hay audio, no pasa nada.
@@ -34,7 +34,9 @@ from juego.audio_manager import audio_manager
 DURACION_SUSTO_MS = 750       # el de siempre ("alien")
 # Los sustos con forma propia (cada uno con el sprite de su alien).
 DURACION_SUSTO_TIPO = {"cf_revela": 1000, "cf_captura": 850,
-                       "ciego": 950, "cazador": 700, "vigia": 950}
+                       "ciego": 950, "cazador": 700, "vigia": 950, "sombra": 1000}
+RADIO_SUSURRO_SOMBRA = 450   # la Sombra no hace pasos: susurra
+INTERVALO_SUSURRO_MS = 2600
 ALCANCE_PASOS = 650          # a qué distancia se empiezan a oír los pasos
 INTERVALO_PASO_MS = 520
 INTERVALO_PASO_PERSIGUE_MS = 340
@@ -58,7 +60,7 @@ class Ambiente:
 
     def susto(self, jugador, tipo="alien", disfraz=None):
         """`tipo`: el tipo del alien que lo atrapó ("ciego", "cazador",
-        "vigia"; otro, como "alien" o "rastreador", es el susto de siempre),
+        "vigia", "sombra"; otro, como "alien", es el susto de siempre),
         "cf_revela" (el Cambiaformas se transformó delante de él) o
         "cf_captura" (lo atrapó el Cambiaformas). `disfraz`: el sprite del
         prisionero que imitaba (para la transformación)."""
@@ -78,6 +80,8 @@ class Ambiente:
             self.sonar("captura_cazador", 1.0)
         elif tipo == "vigia":
             self.sonar("captura_vigia", 1.0)
+        elif tipo == "sombra":
+            self.sonar("captura_sombra", 1.0)
         else:
             self.sonar("captura", 1.0)
 
@@ -98,6 +102,9 @@ class Ambiente:
                 self.sonar("latido", 0.12 + 0.88 * fuerza)
 
         for alien in aliens:
+            if alien.tipo == "sombra":
+                self._susurro(alien, libres, dt)
+                continue
             if alien.accion in ("DESCANSAR", "BUSCAR", "REVISAR_ESCONDITE", "ATRAPAR"):
                 continue
             distancia = min((math.dist(alien.centro, j.hitbox.center) for j in libres), default=None)
@@ -109,6 +116,20 @@ class Ambiente:
                 rapido = alien.accion == "PERSEGUIR" or alien.alerta
                 self.pasos_ms[clave] = INTERVALO_PASO_PERSIGUE_MS if rapido else INTERVALO_PASO_MS
                 self.sonar("paso_alien", 0.15 + 0.85 * (1 - distancia / ALCANCE_PASOS))
+
+
+    def _susurro(self, sombra, libres, dt):
+        """La Sombra no hace ruido al caminar: cerca se oye un susurro."""
+        if getattr(sombra, "oculta", False):
+            return
+        distancia = min((math.dist(sombra.centro, j.hitbox.center) for j in libres), default=None)
+        if distancia is None or distancia > RADIO_SUSURRO_SOMBRA:
+            return
+        clave = id(sombra)
+        self.pasos_ms[clave] = self.pasos_ms.get(clave, 0) - dt
+        if self.pasos_ms[clave] <= 0:
+            self.pasos_ms[clave] = INTERVALO_SUSURRO_MS
+            self.sonar("susurro", 0.25 + 0.75 * (1 - distancia / RADIO_SUSURRO_SOMBRA))
 
 
 def temblor(jugador, tiempo_ms):
@@ -132,8 +153,9 @@ def dibujar_susto(screen, vista, jugador):
     total = getattr(jugador, "susto_total_ms", 0) or DURACION_SUSTO_TIPO.get(tipo, DURACION_SUSTO_MS)
     t = max(0.0, min(1.0, 1 - restante / total))      # 0 al empezar, 1 al terminar
     dibujo = {"cf_revela": _susto_transformacion, "cf_captura": _susto_captura,
-              "ciego": _susto_ciego, "cazador": _susto_cazador, "vigia": _susto_vigia}.get(tipo)
-    # Sin el arte de ese alien (o el Rastreador): el de siempre.
+              "ciego": _susto_ciego, "cazador": _susto_cazador, "vigia": _susto_vigia,
+              "sombra": _susto_sombra}.get(tipo)
+    # Sin el arte de ese alien: el de siempre.
     if dibujo is not None and (tipo.startswith("cf_") or _figura_alien(tipo) is not None):
         anterior = screen.get_clip()
         screen.set_clip(vista.clip(anterior) if anterior else vista)   # no invadir las otras vistas
@@ -188,8 +210,13 @@ def _figura_alien(tipo, animacion="idle", direccion="south"):
     arte. Siempre la misma imagen: la caché de `_a_alto` va por id()."""
     clave = ("alien", tipo, animacion, direccion)
     if clave not in _figuras:
-        from entidades.alien import sprites_de
-        _figuras[clave] = _recortar(sprites_de(tipo), animacion, direccion)
+        if tipo == "sombra":                 # sin arte: su figura se dibuja con formas
+            from entidades.sombra import figura_sombra
+            figura = figura_sombra()
+            _figuras[clave] = figura.subsurface(figura.get_bounding_rect())
+        else:
+            from entidades.alien import sprites_de
+            _figuras[clave] = _recortar(sprites_de(tipo), animacion, direccion)
     return _figuras[clave]
 
 
@@ -476,7 +503,58 @@ def _susto_vigia(screen, vista, t, puesto):
     _apagar_al_final(screen, vista, t)
 
 
+def _susto_sombra(screen, vista, t, puesto):
+    """La Sombra: negro total y unos ojos que se acercan rápido; un parpadeo
+    de linterna y, de golpe, su boca llena de dientes."""
+    import pygame
+    semilla = pygame.time.get_ticks() // 40 + puesto * 1000
+    rng = random.Random(semilla)
+    _velo(screen, vista, (2, 1, 4), 250)
+    h = vista.height
+    cx, cy = vista.center
+    figura = _figura_alien("sombra")
+    if t < 0.5:
+        k = (t / 0.5) ** 2                       # se acercan cada vez más rápido
+        separacion = int(18 + 150 * k)
+        radio = int(3 + 16 * k)
+        from entidades.sombra import _brillo
+        for lado in (-1, 1):
+            for dy, r in ((0, radio), (int(radio * 1.8), max(2, radio // 2))):
+                centro = (cx + lado * separacion // (2 if dy else 1), cy - 40 + dy)
+                brillo = _brillo(max(6, r * 4))
+                screen.blit(brillo, (centro[0] - brillo.get_width() // 2, centro[1] - brillo.get_height() // 2),
+                            special_flags=pygame.BLEND_RGB_ADD)
+                pygame.draw.circle(screen, (255, 250, 225), centro, r)
+        if 0.38 < t < 0.44:                      # la linterna parpadea y se ve algo
+            img = _a_alto(figura, h * 0.5)
+            screen.blit(_con_alfa(img, 120), img.get_rect(center=(cx, cy)))
+    else:
+        k = (t - 0.5) / 0.5
+        img = _a_alto(figura, h * (1.3 + 0.5 * min(1.0, k * 3)))
+        temblor = 14 if k < 0.4 else 5
+        # La cabeza (arriba a la derecha de la figura) en el centro de la pantalla.
+        rect = img.get_rect()
+        rect.center = (cx - int(rect.width * 0.28) + rng.randint(-temblor, temblor),
+                       cy + int(rect.height * 0.3) + rng.randint(-temblor, temblor))
+        screen.blit(img, rect)
+        # Sus ojos también brillan aquí (la figura viene recortada: se corre).
+        from entidades.sombra import figura_sombra, OJOS, ESCALA_FIGURA, _brillo
+        recorte = figura_sombra().get_bounding_rect()
+        escala = img.get_height() / figura.get_height()
+        for i, (x, y, r) in enumerate(OJOS):
+            px = rect.x + int((x * ESCALA_FIGURA - recorte.x) * escala)
+            py = rect.y + int((y * ESCALA_FIGURA - recorte.y) * escala)
+            radio = max(2, int(r * ESCALA_FIGURA * escala))
+            brillo = _brillo(radio * 3)
+            screen.blit(brillo, (px - brillo.get_width() // 2, py - brillo.get_height() // 2),
+                        special_flags=pygame.BLEND_RGB_ADD)
+            pygame.draw.circle(screen, (255, 250, 225), (px, py), radio)
+        if k < 0.3:
+            _velo(screen, vista, (176, 150, 236), 200 * (1 - k / 0.3))
+    _apagar_al_final(screen, vista, t)
+
+
 def figura_alien(tipo):
     """El sprite de frente de ese tipo de alien, recortado (None sin arte).
-    Lo usa también la ventana que presenta a cada alien en el Tutorial."""
+    Lo usa también la ventana que presenta a cada alien en Fácil."""
     return _figura_alien(tipo)

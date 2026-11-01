@@ -35,6 +35,9 @@ class Mundo:
         # Las paredes del archivo, sin lo que agrega la partida (la puerta de
         # la prisión). Al empezar otra ronda en el mismo mapa se vuelve a esto.
         self.paredes_base = list(self.paredes)
+        self.paredes_archivo = list(self.paredes)
+        # Las salas que se sellan en esta ronda (juego/salas_selladas.py).
+        self.sellado = None
         # Barreras que solo frenan a los aliens: los sellos que activa el
         # Forjador al reparar un panel (acciones_rol.py).
         self.bloqueos_alien = []
@@ -42,6 +45,16 @@ class Mundo:
         # (a los jugadores, Game._colisiona_jugador). Aparte de los sellos
         # porque esa lista se rehace en cada cuadro y da el logro "Por aquí no".
         self.puertas_alien = []
+
+    def sellar(self, rects):
+        """Las paredes de las salas selladas de esta ronda (salas_selladas.py)
+        pasan a ser parte del mapa fijo. Si cambian, la navegación se vuelve a
+        armar (las celdas libres salen de `paredes_base`)."""
+        nuevas = self.paredes_archivo + list(rects)
+        if nuevas != self.paredes_base:
+            self.paredes_base = nuevas
+            self.__dict__.pop("_navegaciones", None)
+        self.reiniciar_paredes()
 
     def reiniciar_paredes(self):
         self.paredes = list(self.paredes_base)

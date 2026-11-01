@@ -70,7 +70,7 @@ g.seleccion_roles[0]["cursor"] = 0; g._manejar_tecla(pygame.K_e)
 g.seleccion_roles[1]["cursor"] = 1; g._manejar_tecla(pygame.K_RETURN)
 avanzar(); g.current_screen = "partida"
 g.quitar_cambiaformas()          # los aliens de ruta; el Cambiaformas: prueba_cambiaformas.py
-g.tutorial.activo = False; g._terminar_tutorial()
+g.saltar_tutorial()
 g.mision.abrir_puerta()          # para recorrer la nave entera
 for doble in g.puertas_dobles:   # las puertas para dos también frenan a los aliens
     doble["abierta"] = True
@@ -331,5 +331,96 @@ assert j1.escondido
 assert frames(60 * 4, lambda: j1.minijuego is not None), a1.accion
 print("lo vio meterse al escondite y fue directo a revisar")
 j1.salir_del_escondite()
+
+# Dos escondites juntos, uno con cada jugador, y el alien oye a los dos
+# (sus latidos suben y bajan): antes saltaba de uno al otro, se quedaba
+# parado al frente sin minijuego y el escondite quedaba en rojo.
+import copy
+vecino = copy.copy(escondite)
+vecino["rect"] = escondite["rect"].move(0, 0)
+vecino["rect"].x += escondite["rect"].width + 6
+vecino["clave"] = "vecino_prueba"
+vecino["ocupante"] = None; vecino["revisado_por"] = None; vecino["enfriamiento_ms"] = 0
+g.escondites.append(vecino)
+for e in (escondite, vecino):
+    e["revisado_por"] = None; e["enfriamiento_ms"] = 0
+j1.invulnerable_ms = j2.invulnerable_ms = 0
+j1.minijuego = j2.minijuego = None
+j1.esconderse(escondite); j2.esconderse(vecino)
+preparar_alien(a1, vecino, distancia=170)
+parado_sin_minijuego = 0
+alguno = None
+for k in range(60 * 8):
+    con_minijuego = [j for j in (j1, j2) if j.minijuego is not None]
+    if con_minijuego:
+        # El de adentro se calma y el otro late fuerte: antes, el alien
+        # cambiaba de escondite y dejaba al primero sin minijuego.
+        otro = j2 if con_minijuego[0] is j1 else j1
+        con_minijuego[0].pulso, otro.pulso = 60, 100
+    else:
+        # Los latidos se turnan: cada medio segundo suena más uno que el otro.
+        fuerte, suave = (j1, j2) if (k // 30) % 2 == 0 else (j2, j1)
+        fuerte.pulso, suave.pulso = 100, 60
+    g._actualizar_partida(DT)
+    con_minijuego = [j for j in (j1, j2) if j.minijuego is not None]
+    assert len(con_minijuego) <= 1
+    if con_minijuego:
+        if alguno is None:
+            alguno = (con_minijuego[0], a1.escondite_objetivo)
+        assert a1.escondite_objetivo is alguno[1], "cambió de escondite en pleno minijuego"
+    if any(j.preso for j in (j1, j2)) or (alguno and not con_minijuego):
+        break
+    parado_sin_minijuego = (parado_sin_minijuego + 1 if a1.accion == "REVISAR_ESCONDITE"
+                            and not con_minijuego else 0)
+    assert parado_sin_minijuego < 10, "el alien se quedó frente a los escondites sin minijuego"
+    for e in (escondite, vecino):
+        assert e["revisado_por"] in (None, a1) and (e["revisado_por"] is None or a1.escondite_objetivo is e), \
+            "un escondite quedó marcado por un alien que ya no lo revisa"
+assert alguno, ("nunca empezó el minijuego", a1.accion)
+# Y directo: si ya está revisando uno (con alguien adentro), aunque oiga más
+# al del otro, no cambia.
+for j in (j1, j2):
+    if j.preso is not None:
+        g.mision.liberar(j.preso, j2 if j is j1 else j1)
+    j.salir_del_escondite(); j.minijuego = None; j.invulnerable_ms = 0
+for e in (escondite, vecino):
+    e["revisado_por"] = None; e["enfriamiento_ms"] = 0
+j1.esconderse(escondite); j2.esconderse(vecino)
+preparar_alien(a1, escondite, distancia=60)
+a1.escondite_objetivo = escondite
+escondite["revisado_por"] = a1
+j1.pulso, j2.pulso = 40, 100
+a1.percibir([j2, j1], g.mundo, g.escondites)
+assert a1.escondite_objetivo is escondite, "cambió al escondite del que late más"
+a1._ejecutar("REVISAR_ESCONDITE", DT, 1.0, g.mundo, None, g._alien_revisa)
+assert j1.minijuego is not None, "frente al escondite que revisa, el de adentro tiene minijuego"
+print("dos escondites juntos: el alien escoge uno, arranca su minijuego y no lo cambia por el otro")
+# Si el de adentro sale, el escondite deja de estar en rojo.
+for j in (j1, j2):
+    if j.preso is not None:
+        g.mision.liberar(j.preso, j2 if j is j1 else j1)
+for j in (j1, j2):
+    j.salir_del_escondite(); j.minijuego = None
+for e in (escondite, vecino):
+    e["revisado_por"] = None; e["enfriamiento_ms"] = 0
+j1.invulnerable_ms = 0
+j2.invulnerable_ms = 10 ** 9
+poner(j2, LEJOS)
+j1.esconderse(escondite)
+preparar_alien(a1, escondite, distancia=130)
+j1.pulso = 100
+assert frames(60 * 6, lambda: j1.minijuego is not None), a1.accion
+quien = j1
+esc = quien.escondite
+assert esc["revisado_por"] is a1
+quien.salir_del_escondite()
+quien.invulnerable_ms = 10 ** 9
+for _ in range(5):
+    g._actualizar_partida(DT)
+assert esc["revisado_por"] is None, "al salir, el escondite no queda marcado (en rojo)"
+print("al salir del escondite, ya no queda en rojo")
+for j in (j1, j2):
+    j.salir_del_escondite()
+g.escondites.remove(vecino)
 
 print("\nTODO OK")

@@ -43,7 +43,7 @@ def nueva_partida(roles):
     # El tutorial ya no se acaba solo: aquí se da por terminado (con el
     # tutorial abierto la puerta de la prisión no abre).
     if g.tutorial is not None:
-        g.tutorial.activo = False; g._terminar_tutorial()
+        g.saltar_tutorial()
     # NEXUS se prueba aparte (prueba_nexus.py): aquí no mete rumores ni pide planos.
     # Y el Cambiaformas también (prueba_cambiaformas.py).
     g.nexus = None
@@ -97,6 +97,66 @@ assert g.mision.interactuar(tec) and tec.panel["titulo"] == "Nota arrugada"
 print("nota del código:", tec.panel["cuerpo"][0])
 cap(g, "mision_b_nota.png")
 tec.cerrar_panel()
+
+# Notas de código (vienen con la puerta): el código sale solo en una de ellas
+# (de las de antes de la puerta); las normales quedan de historia.
+normales = [n["rect"].center for n in m.notas if not n["de_codigo"]]
+desde = tec.hitbox.center
+cerca_1 = g.mundo.punto_libre((desde[0] + 120, desde[1]), 30, 30)
+cerca_2 = g.mundo.punto_libre((desde[0] - 120, desde[1]), 30, 30)
+lejos_puerta = g.mundo.punto_libre((m.puerta.left - 300, m.puerta.centery), 30, 30)
+for _ in range(15):
+    m._crear_notas(normales, [[cerca_1, cerca_2, lejos_puerta]])
+    de_codigo = [n for n in m.notas if n["de_codigo"]]
+    assert len(de_codigo) == 3 and len(m.notas) == len(normales) + 3
+    con = [n for n in m.notas if m.codigo in n["texto"]]
+    assert len(con) == 1 and con[0]["de_codigo"], "el código va en una nota de código"
+    assert con[0] is not de_codigo[2], "la de detrás de la puerta nunca lo tiene"
+    assert all(n not in m.notas_alcanzables for n in m.notas if not n["de_codigo"])
+    assert g.mundo.paredes.count(m.puerta) == 1
+from data.notas import NOTAS_CODIGO_VACIAS
+vacias = [n for n in de_codigo if m.codigo not in n["texto"]]
+assert all(n["titulo"] in [v["titulo"] for v in NOTAS_CODIGO_VACIAS] for n in vacias)
+assert "tachuela roja" in m.punto_objetivo(tec)[1]
+cap(g, "mision_b2_notas_codigo.png")
+print("notas de código: el código sale en una de ellas (nunca detrás de la puerta)")
+
+# Varias puertas con código: cada una con su color, su código y sus notas. La
+# segunda puede tener sus notas detrás de la primera (se lee después de abrirla).
+from misiones.mision import color_puerta, _rect
+afuera = g.mundo.punto_libre((m.puerta.left - 700, m.puerta.centery), 40, 120)
+nombre, color = color_puerta(1)
+m.puertas.append({"rect": _rect((afuera[0] + 20, afuera[1] + 60), (40, 120)), "codigo": m._codigo_nuevo({m.codigo}),
+                  "abierta": False, "nombre": nombre, "color": color, "candidatas": [], "notas_mapa": []})
+azul = m.puertas[1]
+m._crear_notas(normales, [[cerca_1], [lejos_puerta]])
+assert azul["codigo"] != m.codigo and azul["nombre"] == "azul" and not azul["abierta"]
+nota_azul = next(n for n in m.notas if azul["codigo"] in n["texto"])
+assert nota_azul["de_codigo"] and nota_azul["puerta"] == 1 and nota_azul["color"] == azul["color"]
+assert "azul" in nota_azul["texto"] and m.codigo not in nota_azul["texto"]
+assert azul["rect"] in g.mundo.paredes and m.puerta in g.mundo.paredes
+# Su teclado abre la azul (no la de la prisión, ni pasa de fase).
+poner(tec, (azul["rect"].right + 30, azul["rect"].centery))
+tec.cerrar_panel()
+assert "azul" in m.pista(tec)
+assert m.interactuar(tec) and tec.panel["titulo"] == "Puerta azul"
+m.resolver_codigo(tec, tec.panel["codigos"].index(azul["codigo"]))
+assert azul["abierta"] and azul["rect"] not in g.mundo.paredes
+assert not m.puerta_abierta and m.fase == "prision"
+print("varias puertas: la azul tiene su código (en una nota detrás de la roja) y su teclado")
+# Si no hay cómo leer su código antes de abrirla, queda abierta.
+m._crear_notas(normales, [[cerca_1], []])
+m.puertas[1]["notas_mapa"] = []
+solo_detras = g.mundo.punto_libre((azul["rect"].left - 200, azul["rect"].centery), 30, 30)
+m._crear_notas([], [[cerca_1], [solo_detras]])
+print("puerta azul con su nota solo detrás de ella:", "abierta" if azul["abierta"] else "cerrada")
+# Volver a como estaba el mapa (una puerta, sin notas de código) para lo que sigue.
+del m.puertas[1:]
+g.mundo.paredes[:] = [r for r in g.mundo.paredes if r != azul["rect"]]
+m._crear_notas(normales)
+con_codigo = [n for n in m.notas if m.codigo in n["texto"]]
+assert len(con_codigo) == 1 and not con_codigo[0]["de_codigo"]
+poner(tec, desde)
 
 # Puerta: código equivocado suena la alarma; el correcto abre.
 poner(tec, (m.puerta.right + 40, m.puerta.centery))
@@ -192,6 +252,9 @@ bio, res = g.jugadores
 m = g.mision
 calmar_aliens(g)
 tipos = sorted(c["tipo"] for c in m.consumibles)
+# Uno solo de cada uno, cada uno en un punto distinto.
+assert len(tipos) == len(set(tipos)), tipos
+assert len({c["rect"].center for c in m.consumibles}) == len(m.consumibles)
 print("\nsin Tecnomante ni Forjador -> consumibles:", tipos, "| piezas para todos:", m.piezas_para_todos)
 assert tipos == ["decodificador", "kit"] and m.piezas_para_todos
 m.abrir_puerta(bio)
@@ -205,9 +268,42 @@ mantener(g, bio, M.SABOTAJE_OTROS_S)
 assert m.consolas[0]["progreso"] >= 1 and "decodificador" in bio.objetos
 mantener(g, bio, M.SABOTAJE_OTROS_S)
 print("la Biomante apagó una consola con el decodificador (y le sirve para las demás)")
+# Sin Forjador, las piezas las ve y las recoge quien lleve el kit.
+assert not m.ve_piezas(res)
 poner(res, g.piezas[0]["rect"].center); frames(g, 1)
-assert res.piezas == 1, "sin Forjador cualquiera recoge piezas"
-print("la Resonante recogió una pieza")
+assert res.piezas == 0, "sin el kit no la ve ni la recoge"
+objetivo = m.punto_objetivo(res)
+kit = [c for c in m.consumibles if c["tipo"] == "kit"][0]
+if m.fase == "capsula":
+    assert objetivo[0] == kit["rect"].center, "la flecha lleva al kit"
+poner(res, kit["rect"].center)
+assert m.interactuar(res) and "kit" in res.objetos and m.ve_piezas(res)
+poner(res, g.piezas[0]["rect"].center); frames(g, 1)
+assert res.piezas == 1, "con el kit la recoge"
+print("sin Forjador: la Resonante toma el kit y con él ve y recoge las piezas")
+
+# Soltar del inventario: con dos cosas sale un panel para escoger.
+assert g._inventario(res) == [("pieza", 1), ("kit", 1)]
+g._manejar_tecla(res.teclas["soltar"][0])
+assert res.panel is not None and res.panel["accion"] == "soltar"
+res.cursor = 0                       # la pieza
+g.confirmar(res)
+assert res.piezas == 0 and res.panel is None
+soltada = g.piezas[-1]
+assert not soltada["recogida"] and soltada["rect"].colliderect(res.hitbox.inflate(40, 40))
+frames(g, 3)
+assert res.piezas == 0, "no la recoge de nuevo mientras sigue encima"
+# Con una sola cosa, se suelta de una: el kit. Sin él ya no ve las piezas...
+g._manejar_tecla(res.teclas["soltar"][0])
+assert "kit" not in res.objetos and not m.ve_piezas(res) and m.kit_libre() is not None
+# ...y la Biomante lo recoge y las ve.
+poner(bio, m.kit_libre()["rect"].center)
+assert m.interactuar(bio) and m.ve_piezas(bio)
+poner(bio, soltada["rect"].center); frames(g, 1)
+assert bio.piezas == 1
+g._manejar_tecla(res.teclas["soltar"][0])
+assert "nada" in res.mensaje.lower() if hasattr(res, "mensaje") and isinstance(res.mensaje, str) else True
+print("soltar: panel para escoger, la pieza no se recoge sola de nuevo, y el kit pasa a otra")
 
 # Derrota: todos encerrados.
 g._atrapar(bio, g.aliens[0]); g._atrapar(res, g.aliens[1])
