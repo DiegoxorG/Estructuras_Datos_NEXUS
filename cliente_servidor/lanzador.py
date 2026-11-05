@@ -13,6 +13,7 @@ Las flechas cambian la opción y el valor; Enter elige; Esc vuelve al menú.
 """
 
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -196,7 +197,12 @@ def _jugar(juego, menu, accion):
                                avisar=lambda t: print("[red]", t, flush=True))
     finally:
         if proceso is not None:
-            proceso.terminate()
+            # Como Ctrl+C: el servidor alcanza a mandar `fin` a los de otras
+            # laptops. (En Windows no hay SIGINT para otro proceso: terminate.)
+            if os.name != "nt":
+                proceso.send_signal(signal.SIGINT)
+            else:
+                proceso.terminate()
             try:
                 proceso.wait(3)
             except subprocess.TimeoutExpired:
