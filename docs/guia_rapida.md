@@ -61,7 +61,7 @@ for f in pruebas/prueba_*.py; do python "$f" >/dev/null 2>&1 || echo FALLA $f; d
 ```
 
 Si no imprime ningún `FALLA`, pasaron todas. En una máquina de 4 núcleos la
-corrida completa tarda unos dos minutos y medio.
+corrida completa tarda entre dos y tres minutos.
 
 Las variables `SDL_VIDEODRIVER=dummy` y `SDL_AUDIODRIVER=dummy` hacen que
 pygame no abra ventana ni busque parlantes. Con ellas, además, el juego no
