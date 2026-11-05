@@ -40,6 +40,18 @@ python pruebas/prueba_estructuras.py  # los arboles por consola
 python pruebas/prueba_textos.py       # que la fuente pueda dibujar todo el texto
 ```
 
+### Cliente-servidor (prototipo, punto 13)
+
+Aparte del modo local (`python main.py` no cambia). Un servidor sin ventana es
+dueño de la partida y el cliente abre una sola ventana con una conexión TCP por
+jugador. Diseño en `docs/cliente_servidor.md`.
+
+```bash
+python -m cliente_servidor.servidor --jugadores 2   # en una terminal
+python -m cliente_servidor.cliente --jugadores 2    # en otra: J1 WASD, J2 flechas
+python pruebas/prueba_cliente_servidor.py           # servidor + 2 clientes falsos, sin ventana
+```
+
 ### Como se juega
 
 Al darle **Jugar** se pregunta primero cuantos juegan (2, 3 o 4) y despues cada

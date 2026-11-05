@@ -71,7 +71,10 @@ reloj de juego, fase de la misión y objetivo, resultado, apagón, piezas
 entregadas, la cápsula, las piezas sueltas; por jugador posición, dirección,
 rol, vidas, preso/eliminado/escondido, sigilo, pulso, puntos, mensaje, pista,
 progreso de lo que mantiene y el panel abierto (título, cuerpo, opciones,
-cursor); por alien tipo, posición, ángulo, acción y cono de visión.
+cursor); por alien tipo, posición, ángulo, acción y cono de visión; y la
+ventana que presenta un alien nuevo (pausa a todos hasta que alguien la
+cierra). Todas las conexiones reciben la misma instantánea (se arma y se
+codifica una vez por envío); cada cliente mira el jugador que le tocó.
 
 ## Quién es dueño de qué
 
@@ -100,7 +103,11 @@ saltándose los menús (`abrir_seleccion_roles`, roles listos,
    la velocidad de los personajes va por cuadro).
 
 A los puestos 3 y 4 se les pone `puede_moverse = True`: en local solo se
-mueven con mando, pero en red su entrada viene del socket.
+mueven con mando, pero en red su entrada viene del socket. El servidor deja de
+actualizar cuando la misión tiene resultado y se apaga cuando se desconectan
+todos. Al que llega con la partida llena se le contesta `error`.
+`--sin-presentaciones` y `--aliens-quietos` sirven para las pruebas y para
+mostrar la red sin que un alien interrumpa.
 
 ## Qué dibuja el cliente
 
@@ -118,7 +125,9 @@ En 127.0.0.1 el viaje ida y vuelta es < 1 ms; lo que se nota es el ritmo:
 la intención espera hasta el siguiente cuadro del servidor (≤ 16 ms) y la
 instantánea sale cada 33 ms, así que la reacción es de 20-50 ms. Se activa
 `TCP_NODELAY` en los dos lados para que Nagle no junte los mensajes chicos.
-El HUD muestra el RTT medido con `n`/`ack`. En una LAN real (2-10 ms) se
+El HUD muestra la "respuesta": desde que se manda la intención `n` hasta que
+llega la primera instantánea con `ack` = `n` (RTT + espera del cuadro + espera
+de la instantánea). En la laptop de prueba da 15-20 ms. En una LAN real (2-10 ms) se
 sigue jugando bien; por Internet haría falta predicción en el cliente.
 
 ## Fuera del prototipo
