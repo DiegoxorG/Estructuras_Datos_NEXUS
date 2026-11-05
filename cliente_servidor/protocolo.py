@@ -16,9 +16,14 @@ import socket
 import zlib
 
 
-VERSION = 2
+VERSION = 3              # (3: latidos, tamaño de la vista, tutorial; una laptop con otra
+                         # versión del juego recibe "error" al saludar en vez de jugar mal)
 HOST = "127.0.0.1"
 PUERTO = 5050
+# La partida se anuncia por UDP a toda la red local en este puerto (cada
+# segundo, mientras falten jugadores): así la otra laptop la ve en la lista
+# de "Unirse" sin escribir nada. Ver servidor._anunciar y lanzador.Buscador.
+PUERTO_ANUNCIO = 5055
 
 # El servidor corre el juego a 60 cuadros por segundo (la velocidad de los
 # personajes va por cuadro, así que tiene que ser el mismo ritmo del modo
@@ -86,6 +91,11 @@ class LectorLineas:
                     mensaje = json.loads(linea.decode("utf-8"))
                 except (UnicodeDecodeError, ValueError):
                     raise ConexionCerrada("mensaje que no es JSON")
+                except RecursionError:
+                    # "[[[[...]]]]" muy anidado: json.loads se pasa del límite
+                    # de recursión. Sin esto la excepción mataba al hilo
+                    # lector sin limpiar (el jugador quedaba "conectado").
+                    raise ConexionCerrada("mensaje demasiado anidado")
                 if not isinstance(mensaje, dict):
                     raise ConexionCerrada("mensaje que no es un objeto")
                 return mensaje
@@ -101,6 +111,11 @@ def comprimir(datos):
     """Un dict -> texto base64 de su JSON comprimido con zlib (para que siga
     siendo una línea de JSON)."""
     crudo = json.dumps(datos, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+    return comprimir_bytes(crudo)
+
+
+def comprimir_bytes(crudo):
+    """Lo mismo, si ya se tiene el JSON en bytes (el servidor lo arma una vez)."""
     return base64.b64encode(zlib.compress(crudo, 6)).decode("ascii")
 
 
@@ -123,14 +138,24 @@ class Reconstructor:
         if "z" in mensaje:
             cambios = descomprimir(mensaje["z"])
         if base is None:
-            self.secciones = {k: dict(v) for k, v in cambios.items()}
+            self.secciones = {k: dict(v) for k, v in cambios.items() if isinstance(v, dict)}
         elif self.secciones is None or base != self.cuadro:
             return None
         else:
+            # Una instantánea NUEVA (copiando solo las secciones que cambian):
+            # la anterior ya se la entregó al hilo principal, que la puede
+            # estar recorriendo para dibujar. Antes se actualizaba encima
+            # desde el hilo lector y el dibujo se caía con "dictionary
+            # changed size during iteration" (ese cuadro iba sencillo) o
+            # mezclaba datos de dos instantáneas.
+            nuevas = dict(self.secciones)
             for seccion, datos in cambios.items():
-                destino = self.secciones.setdefault(seccion, {})
+                if not isinstance(datos, dict):
+                    nuevas.pop(seccion, None)       # (la sección ya no está)
+                    continue
                 # (None vale lo mismo para "ahora vale None" y "ya no está")
-                destino.update(datos)
+                nuevas[seccion] = {**nuevas.get(seccion, {}), **datos}
+            self.secciones = nuevas
         self.cuadro = mensaje.get("c")
         return self.secciones
 

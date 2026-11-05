@@ -137,7 +137,7 @@ assert j2.preso is not None and j2.vidas == 1
 celda = next(c for c in g.mision.celdas if c["preso"] is j2)
 g.mision.liberar(celda, j1)
 assert L.tiene("nadie_atras") and L.tiene("segunda_oportunidad")
-print("rescatar al que le queda 1 vida: 'Nadie se queda atrás' y 'Segunda oportunidad'")
+print("rescatar al que le queda 1 vida: 'Nadie se queda atrás' y 'Última oportunidad'")
 
 # Apagón rápido.
 g.eventos.lanzar("apagon")

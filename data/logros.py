@@ -54,7 +54,7 @@ ARBOL_LOGROS = L(
 
     L("una_mano", "Una mano", "Ayudar a alguien: cualquiera de los logros de esta rama.",
       L("nadie_atras", "Nadie se queda atrás", "Sacar a un compañero de una celda.",
-        L("segunda_oportunidad", "Segunda oportunidad", "Rescatar a alguien que estaba en su última vida.")),
+        L("segunda_oportunidad", "Última oportunidad", "Rescatar a alguien que estaba en su última vida.")),
       L("trabajo_en_equipo", "Trabajo en equipo", "Abrir una puerta para dos."),
       L("rescate", "Rescate", "Llevar a un prisionero hasta la cápsula de escape."),
       L("medico", "Médico de guerra", "Devolverle una vida a un compañero (Regeneración)."),

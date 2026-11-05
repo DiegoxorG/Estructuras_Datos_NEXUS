@@ -157,7 +157,10 @@ try:
     # prueba fallaba aunque el juego anduviera bien.
     correr(8.0, hasta=lambda: x(0) > x0 + 40)
     assert x(0) > x0 + 40, f"con pérdida y retraso J1 camina igual ({x0} -> {x(0)})"
-    assert proxy.descartadas > 5, "el proxy descartó instantáneas"
+    # Un rato más caminando: el cliente ya llega antes a los 40 px (menos
+    # retraso) y con tan pocas instantáneas el 15 % podía no llegar a 5.
+    correr(2.0)
+    assert proxy.descartadas > 5, f"el proxy descartó instantáneas ({proxy.descartadas})"
     c = s.conexiones[0]
     assert c.respuesta_ms is not None and c.respuesta_ms > RETRASO_S * 1000, c.respuesta_ms
     assert len(c.interpolador.bufer) >= 3, "la interpolación tiene instantáneas guardadas"

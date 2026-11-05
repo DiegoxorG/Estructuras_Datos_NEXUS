@@ -180,7 +180,7 @@ def _boton_esquema(esquema, accion="interactuar"):
     return BOTON_ESQUEMA[esquema]
 
 
-def render_controles(screen, esquemas, nombres, libres, conectados):
+def render_controles(screen, esquemas, nombres, libres, conectados, volver="volver a la dificultad"):
     """Cada jugador escoge su control presionando su botón de aceptar.
 
     `esquemas`: el de cada jugador (None = todavía no); `nombres`: el nombre
@@ -250,37 +250,45 @@ def render_controles(screen, esquemas, nombres, libres, conectados):
         x += ancho_ficha + sep
 
     # El "volver" de cada mando conectado: "B", "Círculo" o "B/Círculo".
-    volver = []
+    botones = []
     for esquema in PUESTOS_CON_MANDO:
         if esquema < len(conectados) and conectados[esquema]:
             nombre = _boton_esquema(esquema, "volver")
-            if nombre not in volver:
-                volver.append(nombre)
-    pie = f_chica.render(f"[ESC] o {'/'.join(volver) or 'B'}: volver a la dificultad", True, (194, 216, 248))
+            if nombre not in botones:
+                botones.append(nombre)
+    pie = f_chica.render(f"[ESC] o {'/'.join(botones) or 'B'}: {volver}", True, (194, 216, 248))
     screen.blit(pie, pie.get_rect(center=(ancho // 2, alto - 40)))
 
 
-def render_roles(screen, viewports, seleccion):
+def render_roles(screen, viewports, seleccion, tomados=None, mensaje=None, listo=None):
     """Dibuja la selección de rol de cada jugador en su propia sección.
 
     `seleccion` es una lista con un dict por jugador: cursor (índice del rol
-    sobre el que está), listo (si ya confirmó) y rol (el nombre confirmado).
+    sobre el que está), listo (si ya confirmó) y rol (el nombre confirmado);
+    "numero" (opcional) es su número de jugador si no es el de la lista.
+    En red (cliente.Sesion): `tomados` son los roles ya confirmados por
+    TODOS (también los de la otra laptop) y `mensaje` el aviso de arriba.
     """
     screen.fill((18, 16, 30))
 
-    tomados = {s["rol"] for s in seleccion if s["listo"]}
+    if tomados is None:
+        tomados = {s["rol"] for s in seleccion if s["listo"]}
     for indice, vista in enumerate(viewports):
         if indice >= len(seleccion):
             break
         # Solo las secciones pegadas al borde superior ceden espacio al aviso.
         tope = ALTO_AVISO if vista.top < ALTO_AVISO else 0
-        _seccion_jugador(screen, vista, indice, seleccion[indice], tomados, tope)
+        _seccion_jugador(screen, vista, seleccion[indice].get("numero", indice), seleccion[indice],
+                         tomados - ({seleccion[indice]["rol"]} if seleccion[indice]["listo"] else set()),
+                         tope)
 
     _separadores(screen, viewports)
 
     f = fuente_de_tamano(max(13, min(20, screen.get_width() // 80)))
     faltan = sum(1 for s in seleccion if not s["listo"])
-    if faltan:
+    if mensaje is not None:
+        color = COLOR_LISTO if listo else COLOR_TENUE
+    elif faltan:
         mensaje = f"Faltan {faltan} por elegir" if faltan > 1 else "Falta uno por elegir"
         color = COLOR_TENUE
     else:

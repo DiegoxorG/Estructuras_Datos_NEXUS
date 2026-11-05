@@ -197,6 +197,10 @@ class Mision:
         # cuando las veía cualquiera.
         self.piezas_para_todos = self.activa and self.falta_forjador
         self.resultado = None            # "victoria" / "derrota"
+        # Por qué terminó (para la pantalla de resultados): "escaparon",
+        # "atrapados" (todos encerrados), "eliminados" (sin vidas) o
+        # "terminaron" (Terminar partida en la pausa).
+        self.motivo_fin = None
 
         # Puertas con código: {"rect", "codigo", "abierta", "nombre", "color",
         # "candidatas"}. La primera es la de la prisión (fase 1).
@@ -1034,6 +1038,7 @@ class Mision:
         if not jugadores:
             if any(getattr(j, "eliminado", False) for j in self.juego.jugadores):
                 self.resultado = "derrota"     # eliminaron a todos (sin vidas)
+                self.motivo_fin = "eliminados"
                 return
             jugadores = self.juego.jugadores
         for celda in self.celdas:
@@ -1045,6 +1050,7 @@ class Mision:
         if (jugadores and all(j.preso for j in jugadores)
                 and not any(j.preso.get("fuga_ms") is not None for j in jugadores)):
             self.resultado = "derrota"
+            self.motivo_fin = "atrapados"
             return
         if self.fase == "sabotaje" and self.consolas and all(c["progreso"] >= 1 for c in self.consolas):
             self.fase = "capsula"
@@ -1053,6 +1059,7 @@ class Mision:
             zona = self.capsula.inflate(60, 60)
             if all(not j.preso and zona.colliderect(j.hitbox) for j in jugadores):
                 self.resultado = "victoria"
+                self.motivo_fin = "escaparon"
                 for j in jugadores:
                     j.sumar_puntos(PUNTOS_ESCAPE // max(1, len(jugadores)))
 
@@ -1060,3 +1067,4 @@ class Mision:
         """Se acabó la partida sin que escaparan (Terminar partida en la pausa)."""
         if self.activa and self.resultado is None:
             self.resultado = "derrota"
+            self.motivo_fin = "terminaron"

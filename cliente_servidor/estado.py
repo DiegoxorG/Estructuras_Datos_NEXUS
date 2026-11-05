@@ -38,7 +38,12 @@ def _es_rect(valor):
 # viajaba. Como clave de un dict van como texto: "@J:1".
 REFERENCIAS = {"Publicacion": ("P", "id"), "Jugador": ("J", "puesto"),
                "Alien": ("A", "nombre"), "Sombra": ("A", "nombre"), "Cambiaformas": ("A", "nombre"),
-               "Guardia": ("A", "nombre")}
+               "Guardia": ("A", "nombre"),
+               # Un logro (el aviso "¡LOGRO! Fantasma" es [nodo, ms]): el espejo
+               # tiene el mismo árbol, así que basta la clave. Antes el nodo
+               # llegaba como dict y el aviso nunca se dibujaba en el cliente
+               # (render_aviso_logro pedía nodo.nombre y el error se tragaba).
+               "NodoLogro": ("L", "clave")}
 MARCAS = {marca for marca, _ in REFERENCIAS.values()}
 RESOLVER = None          # fn(marca, identidad) -> objeto del espejo (o None)
 
@@ -163,11 +168,19 @@ def extraer(valor, profundidad=4):
     if isinstance(valor, (list, tuple)):
         if len(valor) > 400:
             return NADA            # (un camino entero, una lista de puntos...)
-        # Los objetos dentro de una lista (los NPC, las publicaciones del
-        # celular...) van con sus datos, un nivel menos de profundidad.
-        return [None if e is NADA else e for e in
-                ((atributos(v, profundidad=profundidad - 2) if hasattr(v, "__dict__") and profundidad > 2
-                  else extraer(v, profundidad - 1)) for v in valor)]
+        # Los objetos dentro de una lista (los NPC...) van con sus datos, un
+        # nivel menos de profundidad. Pero los que viajan como referencia
+        # (jugadores, publicaciones, aliens) o con su clase (CLASES) van así,
+        # como en cualquier otro lado: antes una lista de jugadores
+        # (tutorial.jugadores) mandaba cada Jugador entero y el espejo se lo
+        # copiaba encima, con su puesto y sus controles (el esquema, que es
+        # de cada laptop, quedaba otra vez el del servidor).
+        def elemento(v):
+            if (hasattr(v, "__dict__") and profundidad > 2 and _referencia(v) is None
+                    and type(v).__name__ not in CLASES and not _es_rect(v)):
+                return atributos(v, profundidad=profundidad - 2)
+            return extraer(v, profundidad - 1)
+        return [None if e is NADA else e for e in (elemento(v) for v in valor)]
     if isinstance(valor, dict):
         salida = {}
         for clave, v in valor.items():
@@ -183,6 +196,15 @@ def extraer(valor, profundidad=4):
             return NADA
         return salida
     return NADA
+
+
+def _en_lista(valor, profundidad):
+    ref = _referencia(valor)
+    if ref is not None:
+        return {ref[0]: ref[1]}
+    if hasattr(valor, "__dict__") and profundidad > 2:
+        return atributos(valor, profundidad=profundidad - 2)
+    return extraer(valor, profundidad - 1)
 
 
 def atributos(objeto, saltar=(), profundidad=4):
@@ -223,6 +245,54 @@ def a_python(datos):
     return datos
 
 
+# Los dicts, listas y objetos de CLASES que ya se cambiaron EN SU LUGAR en esta
+# pasada: id -> (el objeto, para que el id no se recicle; los datos que se le
+# pusieron). Si otro dato DISTINTO de la misma instantánea cae en el mismo
+# objeto del espejo, es que en el espejo dos cosas comparten un objeto que en
+# el servidor son dos distintas: el infiltrado es uno de los sospechosos,
+# pero cada lado lo sorteó con su propio random. Antes el segundo pisaba al
+# primero (la lista de sospechosos del cliente salía con uno repetido y otro
+# perdido). Ahora el segundo se copia aparte. Si los datos son los mismos
+# (en el servidor también es un solo objeto, como el escondite que tiene
+# cerca un jugador) se deja compartido. La reinicia `nueva_pasada`
+# (espejo.py, en cada aplicar).
+_TOCADOS = {}
+
+
+def nueva_pasada():
+    _TOCADOS.clear()
+
+
+def _propio(actual, datos):
+    """`actual` si es la primera vez que se cambia en esta pasada (o con los
+    mismos datos); si no, una copia (ver _TOCADOS)."""
+    visto = _TOCADOS.get(id(actual))
+    if visto is not None and visto[0] is actual:
+        if visto[1] == datos:
+            return actual
+        actual = actual.copy() if isinstance(actual, (dict, list)) else _copia_objeto(actual)
+    _TOCADOS[id(actual)] = (actual, datos)
+    return actual
+
+
+def _copia_objeto(objeto):
+    import copy
+    return copy.copy(objeto)
+
+
+def _viaja(valor):
+    """True si `valor` habría viajado seguro si siguiera en el servidor: un
+    dato simple, un Rect o una referencia (esos viajan a cualquier
+    profundidad). Para saber si una clave que no llegó se borró allá (y hay
+    que borrarla aquí) o es algo que nunca viaja (un objeto, una imagen) y es
+    del espejo. Las listas y sets no: muy adentro (las notas de una puerta,
+    su `leida_por`) el servidor no los manda por la profundidad, y borrarlos
+    aquí rompía el dibujo."""
+    if valor is None or isinstance(valor, (bool, int, float, str)) or _es_rect(valor):
+        return True
+    return _referencia(valor) is not None
+
+
 def _mezclar(actual, datos):
     """El valor nuevo para algo que hoy vale `actual` (reusa lo que se pueda:
     los dicts y listas del espejo pueden tener objetos que no viajan)."""
@@ -232,12 +302,25 @@ def _mezclar(actual, datos):
     if _es_ref(datos):
         return a_python(datos)
     if _es_objeto(datos):
+        if actual is not None and type(actual).__name__ == datos["O"][0]:
+            actual = _propio(actual, datos)
         return _armar(datos, actual)
     if isinstance(datos, dict) and not (len(datos) == 1 and next(iter(datos)) in ("R", "S")):
         if isinstance(actual, dict):
+            actual = _propio(actual, datos)
             for clave, v in datos.items():
                 clave = _clave_python(clave)
                 actual[clave] = _mezclar(actual.get(clave), v)
+            # Lo que el servidor borró de este dict (un efecto que se acabó:
+            # "mapa", "escaneo"...) no llega: hay que borrarlo aquí. Antes se
+            # quedaba para siempre (el mapa del Tecnomante no se cerraba en
+            # el cliente). Solo se borra lo que habría viajado (_viaja) con
+            # una clave que se puede mandar; lo demás es del espejo.
+            for clave in list(actual):
+                texto = _clave_texto(clave)
+                if (texto is not None and texto not in datos and texto not in SALTAR
+                        and _viaja(actual[clave])):
+                    del actual[clave]
             return actual
         if actual is not None and hasattr(actual, "__dict__"):
             aplicar(actual, datos)
@@ -245,19 +328,30 @@ def _mezclar(actual, datos):
         return a_python(datos)
     if isinstance(datos, list):
         if isinstance(actual, (list, tuple)) and len(actual) == len(datos):
-            # (un None del otro lado es "esto no se pudo mandar": se deja el de aquí)
-            nuevos = [a if d is None and a is not None else _mezclar(a, d)
+            # (un None del otro lado es "esto no se pudo mandar": se deja el de
+            # aquí; salvo que aquí haya una referencia, que siempre se puede
+            # mandar: entonces allá de verdad es None. Si no, el jugador que
+            # soltó el panel de una puerta para dos seguía "en el panel".)
+            if isinstance(actual, list):
+                actual = _propio(actual, datos)
+            nuevos = [a if d is None and a is not None and _referencia(a) is None else _mezclar(a, d)
                       for a, d in zip(actual, datos)]
             if isinstance(actual, list):
                 actual[:] = nuevos
                 return actual
             return tuple(nuevos)
-        if isinstance(actual, list) and any(isinstance(d, dict) for d in datos) and (
+        armables = all(not isinstance(d, dict) or _es_ref(d) or _es_objeto(d) for d in datos)
+        if isinstance(actual, list) and not armables and (
                 not actual or any(hasattr(a, "__dict__") for a in actual)):
-            # Eran objetos del otro lado (logros, publicaciones...): aquí no se
-            # pueden armar, así que se deja la lista del espejo como está.
+            # Eran objetos del otro lado (logros...): aquí no se pueden armar,
+            # así que se deja la lista del espejo como está.
             return actual
         nuevos = a_python(datos)
+        if any(_es_ref(d) for d in datos):
+            # Una lista de referencias que cambió de largo (un alien más, una
+            # publicación nueva) sí se puede armar con los objetos del espejo;
+            # antes se dejaba la vieja. Lo que no tiene par aquí (None) sobra.
+            nuevos = [n for n, d in zip(nuevos, datos) if n is not None or not _es_ref(d)]
         return tuple(nuevos) if isinstance(actual, tuple) else nuevos
     return a_python(datos)
 

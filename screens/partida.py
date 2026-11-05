@@ -566,13 +566,22 @@ def render_tutorial(screen, vista, jugador, tutorial):
     screen.blit(fondo, caja.topleft)
     pygame.draw.rect(screen, (90, 220, 230), caja, 2, border_radius=6)
     hechos, necesarios = tutorial.listos()
-    titulo = f_chica.render(f"TUTORIAL  {paso}/{total}   ·   listos {hechos}/{necesarios}",
-                            True, (90, 220, 230))
-    screen.blit(titulo, (caja.x + 14, caja.y + 8))
+    pie = None
     if not tutorial.esta_listo(jugador):
         ultimo = paso == total
         pie = f_chica.render(f"[{jugador.nombre_tecla('habilidad')}] "
                              + ("terminar" if ultimo else "siguiente"), True, (150, 156, 190))
+    sitio = caja.width - 28 - (pie.get_width() + 16 if pie is not None else 0)
+    # En una pantalla angosta (2 jugadores a 1024 px) el título largo y el
+    # "[tecla] siguiente" se montaban: primero se acorta el título.
+    for texto_titulo in (f"TUTORIAL  {paso}/{total}   ·   listos {hechos}/{necesarios}",
+                         f"TUTORIAL {paso}/{total} · {hechos}/{necesarios}",
+                         f"{paso}/{total}"):
+        titulo = f_chica.render(texto_titulo, True, (90, 220, 230))
+        if titulo.get_width() <= sitio:
+            break
+    screen.blit(titulo, (caja.x + 14, caja.y + 8))
+    if pie is not None:
         screen.blit(pie, (caja.right - pie.get_width() - 12, caja.y + 8))
     y = caja.y + 10 + f_chica.get_linesize()
     for linea in lineas:

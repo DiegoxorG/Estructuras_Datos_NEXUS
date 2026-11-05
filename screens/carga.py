@@ -114,7 +114,7 @@ def _figura(screen, cuadros, centro_x, piso_y, t_ms, fps, color_respaldo, alto):
     screen.blit(img, img.get_rect(midbottom=(centro_x, piso_y + 4 - rebote)))
 
 
-def render_carga(screen, t_ms, progreso, consejo="", roles=None):
+def render_carga(screen, t_ms, progreso, consejo="", roles=None, titulo="Cargando la nave"):
     """`t_ms`: cuánto lleva la pantalla; `progreso`: 0 a 1 para la barra;
     `roles`: los personajes que eligieron (en orden de jugador)."""
     ancho, alto = screen.get_size()
@@ -171,8 +171,8 @@ def render_carga(screen, t_ms, progreso, consejo="", roles=None):
     # Título, barra y consejo.
     f_titulo = fuente_de_tamano(max(22, min(44, ancho // 30)))
     puntos = "." * (1 + int(t_ms / 400) % 3)
-    titulo = f_titulo.render(f"Cargando la nave{puntos}", True, COLOR_TITULO)
-    screen.blit(titulo, (int(ancho / 2 - f_titulo.size("Cargando la nave...")[0] / 2), int(alto * 0.12)))
+    img = f_titulo.render(f"{titulo}{puntos}", True, COLOR_TITULO)
+    screen.blit(img, (int(ancho / 2 - f_titulo.size(f"{titulo}...")[0] / 2), int(alto * 0.12)))
 
     barra = pygame.Rect(0, 0, int(ancho * 0.42), 12)
     barra.center = (ancho // 2, int(alto * 0.80))
