@@ -3,7 +3,7 @@
 El servidor manda la posición de cada jugador y cada alien 30 veces por
 segundo (y por la red pueden llegar a tirones). Si el cliente dibujara
 siempre la última, todo avanzaría a saltos de 2 cuadros, más los tirones de
-la red. Lo que se hace es dibujar un poquito en el PASADO (RETRASO_MS = 100):
+la red. Lo que se hace es dibujar un poquito en el PASADO (RETRASO_MS = 50):
 casi siempre hay una instantánea antes y otra después de ese momento, y se
 dibuja la mezcla de las dos según cuánto se avanzó entre ellas.
 
@@ -26,7 +26,10 @@ import time
 
 from cliente_servidor.protocolo import HZ_JUEGO
 
-RETRASO_MS = 100
+# 100 ms se sentía pesado jugando (tecla -> se ve moverse ~115 ms en la misma
+# laptop, más por wifi). Con 30 instantáneas por segundo (una cada ~33 ms),
+# 50 ms todavía deja casi siempre una antes y otra después.
+RETRASO_MS = 50
 GUARDAR = 30            # instantáneas guardadas (un segundo a 30 por segundo)
 
 

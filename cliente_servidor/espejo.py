@@ -35,6 +35,8 @@ class Espejo:
         self.g = juego
         self.b = bienvenida
         self.aliens = {}           # nombre -> objeto Alien del espejo
+        self._reloj_ms = None      # para avanzar las animaciones con el tiempo real
+        self._dt_ms = 0
         self.listo = False
         self.error = None
 
@@ -71,6 +73,9 @@ class Espejo:
     def aplicar(self, secciones, interpolado=None):
         g = self.g
         interpolado = interpolado or {}
+        ahora = pygame.time.get_ticks()
+        self._dt_ms = 0 if self._reloj_ms is None else max(0, min(100, ahora - self._reloj_ms))
+        self._reloj_ms = ahora
         glob = secciones.get("g", {})
         for clave, v in glob.items():
             if clave.startswith("G."):
@@ -127,6 +132,16 @@ class Espejo:
             "breathing" if p.animaciones.get("breathing", {}).get(p.direccion) else "idle")
         if nuevo != p.estado:
             p.estado, p.frame_actual, p.contador_animacion = nuevo, 0, 0
+        # En el modo local la animación avanza en Personaje.actualizar, que el
+        # espejo nunca llama: sin esto caminaban "deslizándose" en el cuadro 0.
+        # (Personaje cuenta cuadros de 60 por segundo: se avanza según el
+        # tiempo real, para que vaya igual aunque el cliente dibuje a 30.)
+        self._avance_j = getattr(self, "_avance_j", {})
+        pendiente = self._avance_j.get(id(p), 0.0) + self._dt_ms * 60 / 1000
+        while pendiente >= 1:
+            p._avanzar_animacion()
+            pendiente -= 1
+        self._avance_j[id(p)] = pendiente
         atributos = {k[2:]: v for k, v in datos.items() if k.startswith("a.")}
         panel = atributos.pop("panel", None)
         objetos = atributos.pop("objetos", None)
@@ -164,7 +179,12 @@ class Espejo:
             if alien is None:
                 continue
             x, y, ang = interpolado.get(f"a{i}", pos)
+            antes = alien.hitbox.center
             alien.hitbox.center = (round(x), round(y))
+            # Su animación va con su reloj propio (tiempo_ms) y `moviendose`,
+            # que en el modo local pone alien.actualizar: aquí los pone el espejo.
+            alien.tiempo_ms = getattr(alien, "tiempo_ms", 0) + self._dt_ms
+            alien.moviendose = alien.hitbox.center != antes
             alien.angulo = ang
             for clave, v in otros.items():
                 if clave != "tipo":

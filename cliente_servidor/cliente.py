@@ -350,7 +350,17 @@ class Sesion:
                                  f"Jugador local {i + 1} de {len(self.esquemas)}"])
                 pygame.display.flip()
                 pygame.event.pump()
-            self.conexiones.append(Conexion(self.host, self.puerto, f"local {i + 1}"))
+            try:
+                self.conexiones.append(Conexion(self.host, self.puerto, f"local {i + 1}"))
+            except Rechazado as error:
+                # Ya entró al menos uno y la partida se llenó: se juega con
+                # los que cupieron (antes se iba todo al suelo con "la partida
+                # ya tiene sus N jugadores").
+                if not self.conexiones or "ya tiene sus" not in str(error):
+                    raise
+                self.avisar(f"solo cupieron {len(self.conexiones)} de esta laptop: {error}")
+                self.esquemas = self.esquemas[:len(self.conexiones)]
+                break
         self.entrada = Entrada(self.esquemas, getattr(self.g, "mandos", None))
         from cliente_servidor.espejo import Espejo
         self.espejo = Espejo(self.g, self.conexiones[0].bienvenida)

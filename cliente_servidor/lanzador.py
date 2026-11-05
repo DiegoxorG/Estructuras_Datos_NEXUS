@@ -90,7 +90,10 @@ class MenuRed:
     def __init__(self):
         self.fila = 0
         self.total = 2            # jugadores en la partida
-        self.locales = 2          # cuántos juegan en esta laptop
+        # Cuántos juegan en esta laptop. Empieza en 1: con 2 de 2 la partida
+        # se llenaba aquí mismo y la otra laptop no podía unirse ("La partida
+        # ya tiene sus dos jugadores").
+        self.locales = 1
         self.mandos = False       # los de esta laptop, ¿con mando primero?
         self.dificultad = "normal"
         self.ip = ""
@@ -163,6 +166,12 @@ class MenuRed:
             pantalla.blit(imagen, rect)
             y += imagen.get_height() + 14
         pequena = fuente("small")
+        if self.locales >= self.total:
+            nota = "Ojo: con todos en esta laptop nadie más puede unirse"
+        else:
+            nota = f"La otra laptop se une con {self.total - self.locales} jugador(es)"
+        imagen = pequena.render(nota, True, (255, 214, 120) if self.locales >= self.total else (140, 200, 160))
+        pantalla.blit(imagen, imagen.get_rect(midtop=(ancho // 2, alto - 150)))
         for k, linea in enumerate([f"La IP de esta laptop es {self.ip_propia} (puerto {PUERTO})",
                                    "Flechas para cambiar  ·  Enter para elegir  ·  Esc para volver",
                                    aviso]):
