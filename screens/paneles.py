@@ -16,6 +16,7 @@ infiltrado.py...) y aquí solo se dibuja. Campos que entiende:
 """
 
 import math
+import re
 
 import pygame
 
@@ -174,7 +175,7 @@ def render_panel(screen, vista, jugador):
         y += 6
 
     if panel.get("pie"):
-        pie = f.render(panel["pie"], True, COLOR_TENUE)
+        pie = render_texto_mando(f, panel["pie"], COLOR_TENUE)
         screen.blit(pie, (caja.x + MARGEN, caja.bottom - MARGEN - pie.get_height()))
 
     screen.set_clip(clip_previo)
@@ -402,7 +403,7 @@ def render_mosaico(screen, vista, jugador):
         y += alto_fila + hueco
 
     if pie:
-        img = f_peq.render(pie, True, COLOR_TENUE)
+        img = render_texto_mando(f_peq, pie, COLOR_TENUE)
         screen.blit(img, (caja.centerx - img.get_width() // 2, caja.bottom - m - img.get_height()))
     screen.set_clip(clip_previo)
 
@@ -532,6 +533,62 @@ def _degradado(ancho, alto):
             pygame.draw.line(capa, (12, 13, 26, a), (0, y), (ancho, y))
         _cache_degradado[clave] = capa
     return _cache_degradado[clave]
+
+
+# -- Botones de PlayStation -----------------------------------------------------
+# La tipografía no trae ✕ ○ □ △ (pruebas/prueba_textos.py): en las pistas el
+# texto dice "[Cruz]", "[Círculo]"... y aquí se cambia por el dibujo, con los
+# colores de siempre de esos botones.
+COLOR_SIMBOLO_PS = {"Cruz": (124, 170, 255), "Círculo": (244, 96, 96),
+                    "Cuadrado": (232, 128, 206), "Triángulo": (72, 214, 170)}
+_PATRON_PS = re.compile(r"\[(Cruz|Círculo|Cuadrado|Triángulo)\]")
+
+
+def dibujar_simbolo_ps(screen, nombre, centro, tam, color=None):
+    """El símbolo del botón `nombre` ("Cruz", "Círculo"...) en un cuadro de `tam`."""
+    color = color or COLOR_SIMBOLO_PS[nombre]
+    cx, cy = centro
+    r = tam // 2
+    grosor = max(2, tam // 7)
+    if nombre == "Cruz":
+        pygame.draw.line(screen, color, (cx - r, cy - r), (cx + r, cy + r), grosor)
+        pygame.draw.line(screen, color, (cx - r, cy + r), (cx + r, cy - r), grosor)
+    elif nombre == "Círculo":
+        pygame.draw.circle(screen, color, (cx, cy), r, grosor)
+    elif nombre == "Cuadrado":
+        pygame.draw.rect(screen, color, (cx - r, cy - r, 2 * r, 2 * r), grosor)
+    elif nombre == "Triángulo":
+        alto = int(r * 1.8)
+        puntos = [(cx, cy - alto // 2 - 1), (cx + r, cy + alto // 2), (cx - r, cy + alto // 2)]
+        pygame.draw.polygon(screen, color, puntos, grosor)
+
+
+def render_texto_mando(f, texto, color):
+    """Como f.render(texto, True, color), pero "[Cruz]", "[Círculo]",
+    "[Cuadrado]" y "[Triángulo]" salen con su símbolo dibujado. Nunca queda
+    más ancho que el texto escrito, así que no descuadra nada."""
+    partes = _PATRON_PS.split(texto)
+    if len(partes) == 1:
+        return f.render(texto, True, color)
+    tam = max(8, int(f.get_ascent() * 0.62))
+    piezas = []          # (imagen o None, nombre del símbolo)
+    for i, parte in enumerate(partes):
+        if i % 2:
+            piezas += [(f.render("[", True, color), None), (None, parte),
+                       (f.render("]", True, color), None)]
+        elif parte:
+            piezas.append((f.render(parte, True, color), None))
+    ancho = sum(img.get_width() if img else tam + 4 for img, _ in piezas)
+    salida = pygame.Surface((ancho, f.get_height()), pygame.SRCALPHA)
+    x = 0
+    for img, nombre in piezas:
+        if img is not None:
+            salida.blit(img, (x, 0))
+            x += img.get_width()
+        else:
+            dibujar_simbolo_ps(salida, nombre, (x + 2 + tam // 2, f.get_ascent() - int(f.get_ascent() * 0.38)), tam)
+            x += tam + 4
+    return salida
 
 
 def _con_sombra(screen, f, texto, color, pos, alfa=None):
@@ -724,7 +781,7 @@ def render_pista_zona(screen, vista, jugador):
     else:
         return
     f = _fuente_para(vista)
-    etiqueta = f.render(texto, True, COLOR_TITULO)
+    etiqueta = render_texto_mando(f, texto, COLOR_TITULO)
     caja = etiqueta.get_rect()
     caja.centerx = vista.centerx
     # Bien arriba del borde: abajo a la izquierda va el pulso y abajo al
@@ -974,7 +1031,7 @@ def render_minijuego(screen, vista, jugador):
     titulo = f.render("¡Un alien revisa tu escondite!", True, COLOR_AMENAZA)
     screen.blit(titulo, (panel.x + 14, panel.y + 10))
     tecla = jugador.nombre_tecla("interactuar")
-    pista = f.render(f"[{tecla}] cuando la aguja esté en verde", True, COLOR_TEXTO)
+    pista = render_texto_mando(f, f"[{tecla}] cuando la aguja esté en verde", COLOR_TEXTO)
     screen.blit(pista, (panel.x + 14, panel.y + 10 + f.get_linesize()))
 
     # Barra de timing.

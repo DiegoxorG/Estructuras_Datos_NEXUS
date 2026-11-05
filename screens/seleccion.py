@@ -20,6 +20,7 @@ import pygame
 from data.roles import ROLES, MINIMO_JUGADORES, MAXIMO_JUGADORES
 from juego.fuentes import fuente_de_tamano
 from juego.mandos import nombre_boton, tipo_de, PUESTOS_CON_MANDO
+from screens.paneles import render_texto_mando
 
 
 COLOR_FONDO = (26, 28, 48)
@@ -244,7 +245,7 @@ def render_controles(screen, esquemas, nombres, libres, conectados):
         pygame.draw.rect(screen, borde, ficha, 2)
         img = f.render(nombre, True, COLOR_TEXTO if esquema in libres else COLOR_TOMADO)
         screen.blit(img, img.get_rect(midtop=(ficha.centerx, ficha.y + 8)))
-        img = f_chica.render(estado, True, color)
+        img = render_texto_mando(f_chica, estado, color)
         screen.blit(img, img.get_rect(midtop=(ficha.centerx, ficha.y + 12 + f.get_linesize())))
         x += ancho_ficha + sep
 

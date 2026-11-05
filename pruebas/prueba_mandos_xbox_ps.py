@@ -275,7 +275,8 @@ pulsar(g, boton_c(22, "A"))                                        # Cruz tambi�
 assert g.current_screen == "controles", g.current_screen
 g._dibujar()
 assert "Mando 1 (Xbox)" in textos and "Mando 2 (PlayStation)" in textos, textos
-assert "[A] tomar" in textos and "[Cruz] tomar" in textos, textos
+assert "[A] tomar" in textos and " tomar" in textos, textos      # [✕] dibujado
+assert seleccion._boton_esquema(2) == "A" and seleccion._boton_esquema(3) == "Cruz"
 assert "[ESC] o B/Círculo: volver a la dificultad" in textos, textos
 pulsar(g, boton_c(22, "A"))                                        # jugador 1 -> PS
 textos.clear(); g._dibujar()
@@ -286,6 +287,18 @@ pulsar(g, boton_c(11, "A"))                                        # jugador 2 -
 assert g.esquemas == [3, 2] and g.current_screen == "roles", (g.esquemas, g.current_screen)
 assert [e["tecla_ok"] for e in g.seleccion_roles] == ["Cruz", "A"]
 print("controles: 'Mando 1 (Xbox)', 'Mando 2 (PlayStation)', [A] / [Cruz] tomar")
+
+# Los símbolos de PS se dibujan (la fuente no los trae) y no ensanchan el texto.
+from screens.paneles import render_texto_mando
+from juego.fuentes import fuente_de_tamano
+f = fuente_de_tamano(20)
+for nombre in ("Cruz", "Círculo", "Cuadrado", "Triángulo"):
+    texto = f"[{nombre}] Esconderse"
+    img = render_texto_mando(f, texto, (255, 255, 255))
+    assert 0 < img.get_width() <= f.size(texto)[0] and img.get_height() == f.get_height()
+    assert img.get_bounding_rect().width > f.size("[] Esconderse")[0], "el símbolo se ve"
+assert render_texto_mando(f, "[A] Esconderse", (255, 255, 255)).get_size() == f.size("[A] Esconderse")
+print("símbolos: cruz, círculo, cuadrado y triángulo dibujados con pygame.draw en las pistas")
 
 # Roles con la cruceta (botón de controller) y Cruz / A.
 c0 = g.seleccion_roles[0]["cursor"]
