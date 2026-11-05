@@ -50,7 +50,8 @@ from entidades.minijuego_latidos import MinijuegoLatidos
 from misiones.mision import Mision, Equipo
 from juego.ambiente import Ambiente
 from misiones.ia_nave import Narrador
-from juego.mandos import Mandos, tecla_virtual, PUESTOS_CON_MANDO
+from juego.mandos import (Mandos, tecla_virtual, PUESTOS_CON_MANDO, nombre_boton,
+                          EVENTOS_MANDO, EVENTOS_CONEXION)
 from juego.tutorial import Tutorial
 from juego.pausa import MenuPausa, mover_en_logros
 from juego.audio_manager import audio_manager
@@ -489,7 +490,8 @@ class Game:
                 "tecla_mover": ("Stick" if self.mandos.hay_mando(esquema)
                                 else "Flechas" if pygame.K_UP in teclas["arriba"]
                                 else f"{_nombre(teclas['arriba'][0])}/{_nombre(teclas['abajo'][0])}"),
-                "tecla_ok": "A" if self.mandos.hay_mando(esquema) else _nombre(teclas["interactuar"][0]),
+                "tecla_ok": (nombre_boton("interactuar", self.mandos.tipo(esquema))
+                             if self.mandos.hay_mando(esquema) else _nombre(teclas["interactuar"][0])),
             })
         if ir:
             self.transitions.request(self, "roles")
@@ -1729,12 +1731,11 @@ class Game:
                     self.pausa.mover_mouse(evento.pos)
                 else:
                     self._mouse_en_mapa(evento.pos)
-            elif evento.type in (pygame.JOYBUTTONDOWN, pygame.JOYHATMOTION,
-                                 pygame.JOYAXISMOTION, pygame.JOYDEVICEADDED,
-                                 pygame.JOYDEVICEREMOVED):
+            elif evento.type in EVENTOS_MANDO:
+                # JOY* y CONTROLLER* (mandos.py decide cuál cuenta de cada mando).
                 for puesto, accion in self.mandos.evento(evento):
                     self._tecla_mando(puesto, accion)
-                if evento.type in (pygame.JOYDEVICEADDED, pygame.JOYDEVICEREMOVED):
+                if evento.type in EVENTOS_CONEXION:
                     self._sincronizar_mandos()
 
     def _tecla_mando(self, puesto, accion):
@@ -2063,7 +2064,9 @@ class Game:
         elif self.current_screen == "dificultad":
             self.rects_opciones = render_dificultad(self.screen, self.dificultad_seleccionada)
         elif self.current_screen == "controles":
-            render_controles(self.screen, self.esquemas, NOMBRE_ESQUEMA, self.esquemas_libres(),
+            render_controles(self.screen, self.esquemas,
+                             [self.mandos.nombre_esquema(e, n) for e, n in enumerate(NOMBRE_ESQUEMA)],
+                             self.esquemas_libres(),
                              [self.mandos.hay_mando(e) for e in range(len(NOMBRE_ESQUEMA))])
         elif self.current_screen == "roles":
             viewports = calcular_viewports(self.ancho, self.alto, self.cantidad_jugadores)

@@ -19,6 +19,7 @@ import pygame
 
 from data.roles import ROLES, MINIMO_JUGADORES, MAXIMO_JUGADORES
 from juego.fuentes import fuente_de_tamano
+from juego.mandos import nombre_boton, tipo_de, PUESTOS_CON_MANDO
 
 
 COLOR_FONDO = (26, 28, 48)
@@ -170,6 +171,14 @@ def render_dificultad(screen, seleccionado):
 BOTON_ESQUEMA = ["E", "Enter", "A", "A"]     # con qué se toma cada control
 
 
+def _boton_esquema(esquema, accion="interactuar"):
+    """El botón para tomar el control: en los mandos, el de ese mando
+    (A en Xbox, Cruz en PlayStation)."""
+    if esquema in PUESTOS_CON_MANDO:
+        return nombre_boton(accion, tipo_de(esquema))
+    return BOTON_ESQUEMA[esquema]
+
+
 def render_controles(screen, esquemas, nombres, libres, conectados):
     """Cada jugador escoge su control presionando su botón de aceptar.
 
@@ -228,7 +237,7 @@ def render_controles(screen, esquemas, nombres, libres, conectados):
         if esquema in esquemas:
             estado, color, borde = f"Jugador {esquemas.index(esquema) + 1}", COLOR_LISTO, COLOR_LISTO
         elif esquema in libres:
-            estado, color, borde = f"[{BOTON_ESQUEMA[esquema]}] tomar", (194, 216, 248), COLOR_BORDE
+            estado, color, borde = f"[{_boton_esquema(esquema)}] tomar", (194, 216, 248), COLOR_BORDE
         else:
             estado, color, borde = "sin conectar", COLOR_TOMADO, COLOR_TOMADO
         pygame.draw.rect(screen, (24, 26, 44), ficha)
@@ -239,7 +248,14 @@ def render_controles(screen, esquemas, nombres, libres, conectados):
         screen.blit(img, img.get_rect(midtop=(ficha.centerx, ficha.y + 12 + f.get_linesize())))
         x += ancho_ficha + sep
 
-    pie = f_chica.render("[ESC] o B: volver a la dificultad", True, (194, 216, 248))
+    # El "volver" de cada mando conectado: "B", "Círculo" o "B/Círculo".
+    volver = []
+    for esquema in PUESTOS_CON_MANDO:
+        if esquema < len(conectados) and conectados[esquema]:
+            nombre = _boton_esquema(esquema, "volver")
+            if nombre not in volver:
+                volver.append(nombre)
+    pie = f_chica.render(f"[ESC] o {'/'.join(volver) or 'B'}: volver a la dificultad", True, (194, 216, 248))
     screen.blit(pie, pie.get_rect(center=(ancho // 2, alto - 40)))
 
 
