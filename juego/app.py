@@ -725,6 +725,9 @@ class Game:
             self.aliens.append(alien)
         self.alien_en_vista = 0
         self.mostrar_arbol_alien = False
+        # La vista del grafo (Pausa > Opciones) tampoco pasa a la partida
+        # siguiente: si no, la nueva arrancaba tapada por el grafo.
+        self.vista_grafo = None
 
     def _crear_prisioneros(self):
         """Los prisioneros que caminan (cuentas de NEXUS), el caso del
