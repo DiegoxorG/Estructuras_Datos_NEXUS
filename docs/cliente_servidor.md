@@ -53,6 +53,7 @@ de línea dentro de los textos, así que la línea nunca se parte.
 | S→C | `espera` | `conectados`, `faltan` (mientras no han llegado todos) |
 | C→S | `intencion` | `n` (número de secuencia), `mantener` (acciones mantenidas), `pulsar` (acciones de una vez) |
 | S→C | `estado` | la instantánea (abajo), `ack` = último `n` recibido de cada jugador |
+| C→S | `adios` | (el cliente se va; cerrar el socket vale lo mismo) |
 | S→C | `error` | `texto` (servidor lleno, versión distinta) |
 
 Las acciones son nombres, no teclas: `arriba abajo izquierda derecha sigilo
@@ -111,8 +112,9 @@ mostrar la red sin que un alien interrumpa.
 
 ## Qué dibuja el cliente
 
-Una ventana dividida en una vista por jugador local (1, 2 o 4 vistas), cada
-una con su cámara centrada en su jugador. Dibuja el fondo del mapa (el mismo
+Una ventana dividida en una vista por jugador local (completa, mitades o
+cuartos; con 3 el cuarto que sobra muestra el equipo), cada una con su cámara
+centrada en su jugador. Dibuja el fondo del mapa (el mismo
 PNG de `Imagenes/Fondos/`, escalado solo el pedazo visible), los sprites de
 los personajes (`Movimiento/Personaje.py`), los aliens como círculos con su
 cono de visión, las piezas y la cápsula, y un HUD de texto (fase, objetivo,
