@@ -495,9 +495,15 @@ class Mision:
             alcanzables = [p for p in self.puertas_cerradas() if p["candidatas"]
                            and (not p.get("adentro") or any(self._llega(jugador, n["rect"].center)
                                                             for n in p["candidatas"]))]
-            puerta = cerca(alcanzables, lambda p: p["rect"].center)
-            if puerta is not None:
-                return self._guiar_a_puerta(jugador, puerta, cerca)
+            # De la más cercana a la más lejana, la primera a la que se puede
+            # ir ahora: si la nota que falta leer de una está detrás de OTRA
+            # puerta cerrada, la flecha apuntaba a un lugar sin camino (y los
+            # jugadores se quedaban dando vueltas) en vez de llevar a la otra.
+            c0 = jugador.hitbox.center
+            for puerta in sorted(alcanzables, key=lambda p: math.dist(p["rect"].center, c0)):
+                guia = self._guiar_a_puerta(jugador, puerta, cerca, solo_alcanzables=True)
+                if guia is not None:
+                    return guia
         if self.fase == "sabotaje":
             pendientes = [k for k in self.consolas if k["progreso"] < 1]
             consola = cerca(pendientes, lambda k: k["rect"].center)
@@ -580,12 +586,20 @@ class Mision:
         nav = navegacion.de_mundo(mundo, 34, 20)
         return nav.conectados(jugador.hitbox.center, punto, extra=paredes_extra(mundo))
 
-    def _guiar_a_puerta(self, jugador, puerta, cerca):
+    def _guiar_a_puerta(self, jugador, puerta, cerca, solo_alcanzables=False):
+        """A dónde ir para abrir `puerta`: la puerta (si ya leyó el código) o
+        la nota más cercana sin leer. Con `solo_alcanzables`, solo notas a las
+        que se llega con lo que está cerrado ahora; si no queda ninguna,
+        None."""
         leyo = any(jugador in n["leida_por"] and puerta["codigo"] in n["texto"] for n in self.notas)
         if leyo or not puerta["candidatas"]:
             return puerta["rect"].center, f"Abre la puerta{self._de(puerta)} con el código"
-        nota = cerca([n for n in puerta["candidatas"] if jugador not in n["leida_por"]],
-                     lambda n: n["rect"].center)
+        sin_leer = [n for n in puerta["candidatas"] if jugador not in n["leida_por"]]
+        if solo_alcanzables:
+            sin_leer = [n for n in sin_leer if self._llega(jugador, n["rect"].center)]
+            if not sin_leer:
+                return None
+        nota = cerca(sin_leer, lambda n: n["rect"].center)
         if nota is None:
             return puerta["rect"].center, f"Abre la puerta{self._de(puerta)}"
         if nota["de_codigo"]:

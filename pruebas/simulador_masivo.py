@@ -66,7 +66,7 @@ os.chdir(RAIZ)
 
 DT = 1000 // 60
 PASO = 16                 # lado de la celda de la cuadrícula de los bots
-RADIO_EVITAR = 170
+RADIO_EVITAR = 240
 LIMITE_LENTO_MS = 25
 DIFICULTADES_SIM = ("facil", "normal", "dificil", "inteligente")
 CANTIDADES_SIM = (2, 3, 4)
@@ -497,12 +497,20 @@ class Bot:
                            if a.descanso_ms <= 0 and not getattr(a, "disfrazado", False)
                            and not getattr(a, "oculta", False)
                            and math.dist(a.centro, destino) > RADIO_EVITAR
-                           and math.dist(a.centro, j.hitbox.center) > 60]
+                           and 60 < math.dist(a.centro, j.hitbox.center) < 1300]
             ruta = None
-            if peligro and self.ha_esperado < 6000:
-                ruta = self.mapa.camino(j.hitbox.center, destino, cerca, peligro)
+            self.esperando = False
+            if peligro and self.ha_esperado < 9000:
+                ruta = self.mapa.camino(j.hitbox.center, destino, cerca, peligro, max_nodos=12000)
                 if ruta is None:
-                    self.ha_esperado += 400
+                    # Todos los caminos pasan por donde ve un alien: espera
+                    # quieto (en sigilo) un rato antes de arriesgarse.
+                    self.ha_esperado += 450
+                    if self.mapa.llega(j.hitbox.center, destino, cerca + 84):
+                        self.esperando = True
+                        self.ruta = []
+                        self.replan_ms = 450
+                        return
             if ruta is None:
                 ruta = self.mapa.camino(j.hitbox.center, destino, cerca)
                 if ruta is None:
@@ -825,7 +833,9 @@ class Bot:
         if self.proxima_suicida <= 0:
             self.proxima_suicida = self.rng.randint(80000, 400000)
             self.suicida_ms = 15000
-        perseguidor = next((a for a in g.aliens if a.objetivo is j and a.accion == "PERSEGUIR"), None)
+        perseguidor = next((a for a in g._aliens_a_la_vista()
+                            if a.descanso_ms <= 0 and (a.objetivo is j or (
+                                math.dist(a.centro, j.hitbox.center) < 200 and j.cazable))), None)
         if perseguidor is not None and self.suicida_ms <= 0:
             # ¿Esconderse? Si hay un escondite a mano, a veces.
             esc = g.escondite_bajo(j)
@@ -898,14 +908,16 @@ class Bot:
         else:
             self.en_meta_ms = 0
             self._ir(destino, cerca, dt)
-        cerca_alien = any(math.dist(a.centro, j.hitbox.center) < 420 and a.objetivo is not j
+        cerca_alien = any(math.dist(a.centro, j.hitbox.center) < 650 and a.objetivo is not j
                           for a in g._aliens_a_la_vista())
-        self.entrada.mantener("sigilo", cerca_alien and self.suicida_ms <= 0)
+        self.entrada.mantener("sigilo", (cerca_alien or getattr(self, "esperando", False))
+                              and self.suicida_ms <= 0)
         self._vigilar_trabado(dt, not llego, destino)
 
     def _vigilar_trabado(self, dt, con_meta, destino=None):
         j = self.j
-        if con_meta and j.hitbox.topleft == self.ultimo and not self.g.sin_luz:
+        if con_meta and j.hitbox.topleft == self.ultimo and not self.g.sin_luz \
+                and not getattr(self, "esperando", False):
             self.quieto_ms += dt
             if self.quieto_ms > 8000:
                 hay_ruta = bool(self.ruta)
@@ -1169,8 +1181,12 @@ def configuracion(i, semilla, jugadores=None, dificultades=None, mapa=None):
             esquemas = rng.sample([0, 1, 2, 3], n)
     else:
         esquemas = list(range(n))
+    # Partidas "asistidas": los aliens ven y oyen menos, para que los bots (que
+    # son peores que una persona en sigilo) lleguen a las fases del final.
+    asistida = rng.random() < 0.5
     return {"i": i, "semilla": semilla * 100003 + i, "jugadores": n, "dificultad": dif,
-            "roles": roles, "mandos": mandos, "esquemas": esquemas, "mapa": mapa}
+            "roles": roles, "mandos": mandos, "esquemas": esquemas, "mapa": mapa,
+            "asistida": asistida}
 
 
 def jugar(cfg, max_s=480, dibujar=True, cada_dibujo=6, verbose=False):
@@ -1187,6 +1203,12 @@ def jugar(cfg, max_s=480, dibujar=True, cada_dibujo=6, verbose=False):
     fase = None
     try:
         g = preparar_partida(cfg, rng, reg)
+        if cfg.get("asistida") and g.dificultad is not None:
+            original = g.dificultad.valor
+            def valor(nombre, original=original):
+                v = original(nombre)
+                return v * 0.45 if nombre in ("vision_aliens", "oido_aliens") else v
+            g.dificultad.valor = valor
         mapa = Mapa(g)
         alcanzables = revisar_alcance(g, mapa, reg)
         bots = [Bot(g, j, mapa, rng, reg) for j in g.jugadores]
@@ -1284,7 +1306,8 @@ def _contexto(g):
 def _imprimir_partida(r):
     cfg = r["cfg"]
     print(f"#{cfg['i']} {cfg['jugadores']}J {cfg['dificultad']:<11} {'+'.join(cfg['roles'])} "
-          f"esquemas={cfg['esquemas']}{'' if cfg['mandos'] else ' (sin mandos)'}: "
+          f"esquemas={cfg['esquemas']}{'' if cfg['mandos'] else ' (sin mandos)'}"
+          f"{' asistida' if cfg.get('asistida') else ''}: "
           f"{str(r['resultado']).upper()} en {r['duracion_s']} s | capturas {r['capturas']} "
           f"| fases {r['fases']}")
     for tipo, firma, detalle in r["problemas"]:
