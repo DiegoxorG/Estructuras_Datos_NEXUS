@@ -8,6 +8,7 @@ menú principal.
 import pygame
 
 from juego.fuentes import fuente, fuente_de_tamano
+from juego.mandos import botones_conectados
 from juego.ui_components import Button
 from screens.paneles import COLOR_TITULO, COLOR_TENUE, COLOR_INFO
 from screens.logros import render_arbol_logros
@@ -16,6 +17,12 @@ from screens.logros import render_arbol_logros
 COLOR_VELO = (8, 8, 18, 175)
 COLOR_FRANJA = (14, 14, 28)
 PISTA = "Flechas + Enter  ·  Esc: volver  ·  Mando: cruceta, A y B"
+
+
+def _pista():
+    """PISTA con los botones de los mandos conectados (A/B o Cruz/Círculo)."""
+    return (f"Flechas + Enter  ·  Esc: volver  ·  Mando: cruceta, "
+            f"{botones_conectados('interactuar')} y {botones_conectados('volver')}")
 
 
 def render_pausa(screen, pausa):
@@ -59,9 +66,9 @@ def render_pausa(screen, pausa):
         screen.blit(aviso, aviso.get_rect(midtop=(ancho // 2, y + 6)))
 
     # La pista va en una franja propia, encima de la barra de teclas de la partida.
-    pista = fuente_de_tamano(18).render(PISTA, True, COLOR_TENUE)
+    pista = fuente_de_tamano(18).render(_pista(), True, COLOR_TENUE)
     if pista.get_width() > ancho - 32:
-        pista = fuente_de_tamano(13).render(PISTA, True, COLOR_TENUE)
+        pista = fuente_de_tamano(13).render(_pista(), True, COLOR_TENUE)
     franja = pygame.Rect(0, alto - pista.get_height() - 20, ancho, pista.get_height() + 20)
     pygame.draw.rect(screen, COLOR_FRANJA, franja)
     screen.blit(pista, pista.get_rect(center=franja.center))

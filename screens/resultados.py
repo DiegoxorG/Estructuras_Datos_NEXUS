@@ -11,6 +11,7 @@ import pygame
 
 
 from juego.fuentes import fuente_de_tamano
+from juego.mandos import botones_conectados
 from juego.ui_components import Button, dibujar_texto_ajustado
 
 
@@ -190,6 +191,6 @@ def render_resultados(screen, jugadores, font=None, small_font=None,
         Button(rect, texto, accion).draw(screen, hover=(i == seleccion or rect.collidepoint(mouse)))
         rects.append(rect)
         x += ancho_boton + separacion
-    pista = fuente_de_tamano(15).render("Flechas + Enter  ·  Mando: cruceta y A", True, COLOR_TENUE)
+    pista = fuente_de_tamano(15).render(f"Flechas + Enter  ·  Mando: cruceta y {botones_conectados('interactuar')}", True, COLOR_TENUE)
     screen.blit(pista, pista.get_rect(midtop=(ancho // 2, y_botones + alto_boton + 12)))
     return rects

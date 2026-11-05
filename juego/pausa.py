@@ -151,6 +151,11 @@ class MenuPausa:
         self.vista = vista
         self.seleccion = 0
         self.aviso_ms = 0
+        # Los rects eran de la vista anterior (los vuelve a llenar el dibujo):
+        # un movimiento del mouse en el mismo cuadro dejaba la selección en
+        # una opción que esta vista no tiene, y Enter tumbaba el juego.
+        self.rects = []
+        self.rects_logros = {}
 
     @property
     def arbol(self):

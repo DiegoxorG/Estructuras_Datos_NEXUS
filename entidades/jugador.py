@@ -19,7 +19,7 @@ from Estructuras.arbol_habilidades import construir_arbol
 from data.habilidades import ARBOLES_POR_ROL
 from data.roles import ROLES_POR_NOMBRE
 from juego.oscuridad import Linterna
-from juego.mandos import tecla_virtual, es_virtual, NOMBRE_BOTON
+from juego.mandos import tecla_virtual, es_virtual, nombre_boton, tipo_de
 
 
 # Teclas de cada PUESTO, no de cada rol: el rol se escoge al empezar la
@@ -166,7 +166,10 @@ class Inventario(Counter):
         if self[tipo] > 0:
             self[tipo] -= 1
         if self[tipo] <= 0:
-            del self[tipo]
+            # dict.pop y no `del self[tipo]`: Counter.__delitem__ pregunta
+            # `tipo in self`, que aquí (__contains__ de abajo) es False con 0, y
+            # entonces no borraba nada: quedaba {"fruta": 0} en el inventario.
+            dict.pop(self, tipo, None)
 
     def __contains__(self, tipo):
         return self.get(tipo, 0) > 0
@@ -281,7 +284,8 @@ class Jugador:
         """Nombre legible de su tecla, para las pistas en pantalla."""
         teclas = self.teclas.get(accion, ())
         if getattr(self, "con_mando", False) and any(es_virtual(t) for t in teclas):
-            return NOMBRE_BOTON.get(accion, "?")
+            # El botón de SU mando: A en Xbox, Cruz en PlayStation...
+            return nombre_boton(accion, self.tipo_mando)
         teclas = [t for t in teclas if not es_virtual(t)]
         if not teclas:
             return "?"
@@ -301,6 +305,11 @@ class Jugador:
             pygame.K_x: "X", pygame.K_COMMA: ",", pygame.K_l: "L", pygame.K_n: "N",
         }
         return nombres.get(teclas[0], "?")
+
+    @property
+    def tipo_mando(self):
+        """"xbox", "playstation" u "otro": el mando con el que juega (mandos.py)."""
+        return tipo_de(getattr(self, "esquema", self.puesto))
 
     def pista_pestanas(self):
         """Cómo se nombran en pantalla las teclas para cambiar de pestaña."""

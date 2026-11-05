@@ -50,7 +50,8 @@ from entidades.minijuego_latidos import MinijuegoLatidos
 from misiones.mision import Mision, Equipo
 from juego.ambiente import Ambiente
 from misiones.ia_nave import Narrador
-from juego.mandos import Mandos, tecla_virtual, PUESTOS_CON_MANDO
+from juego.mandos import (Mandos, tecla_virtual, PUESTOS_CON_MANDO, nombre_boton,
+                          EVENTOS_ENTRADA, EVENTOS_CONEXION)
 from juego.tutorial import Tutorial
 from juego.pausa import MenuPausa, mover_en_logros
 from juego.audio_manager import audio_manager
@@ -113,6 +114,13 @@ TECLAS_OK_MENU = {pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_e}
 
 # Lo que cuesta que te atrape un alien.
 PUNTOS_POR_SER_ATRAPADO = 10
+
+# Lo más que puede avanzar el juego en un cuadro. Si el bucle se traba (F9
+# abriendo la otra ventana, arrastrar la ventana en Windows, la laptop que se
+# suspende), el siguiente tick trae segundos enteros: sin este tope todo lo que
+# va con `dt` (el minijuego del escondite, sustos, celdas, eventos, director)
+# saltaba esos segundos de golpe.
+DT_MAXIMO_MS = 100
 
 # Controles de movimiento de cada puesto. Los puestos 3 y 4 van sin controles a
 # propósito: se dibujan en el mapa y se animan, pero no caminan, porque les toca
@@ -489,7 +497,8 @@ class Game:
                 "tecla_mover": ("Stick" if self.mandos.hay_mando(esquema)
                                 else "Flechas" if pygame.K_UP in teclas["arriba"]
                                 else f"{_nombre(teclas['arriba'][0])}/{_nombre(teclas['abajo'][0])}"),
-                "tecla_ok": "A" if self.mandos.hay_mando(esquema) else _nombre(teclas["interactuar"][0]),
+                "tecla_ok": (nombre_boton("interactuar", self.mandos.tipo(esquema))
+                             if self.mandos.hay_mando(esquema) else _nombre(teclas["interactuar"][0])),
             })
         if ir:
             self.transitions.request(self, "roles")
@@ -571,6 +580,9 @@ class Game:
             raise carga["error"]
         if carga["listo"] and carga["ms"] >= self.MIN_CARGA_MS and self.transitions.is_idle():
             self.carga, self.carga_final = None, carga
+            # Si un mando se conectó o desconectó mientras el otro hilo creaba
+            # a los jugadores, alguno pudo quedar con el dato viejo.
+            self._sincronizar_mandos()
             self.transitions.request(self, "partida")
 
     def _progreso_carga(self):
@@ -725,6 +737,9 @@ class Game:
             self.aliens.append(alien)
         self.alien_en_vista = 0
         self.mostrar_arbol_alien = False
+        # La vista del grafo (Pausa > Opciones) tampoco pasa a la partida
+        # siguiente: si no, la nueva arrancaba tapada por el grafo.
+        self.vista_grafo = None
 
     def _crear_prisioneros(self):
         """Los prisioneros que caminan (cuentas de NEXUS), el caso del
@@ -1646,7 +1661,7 @@ class Game:
 
     def run(self):
         while self.running:
-            dt = self.clock.tick(DEFAULT_FPS)
+            dt = min(self.clock.tick(DEFAULT_FPS), DT_MAXIMO_MS)
             if self.mostrar_fps and self.cazar_tirones:
                 self.diagnostico.empezar()
             t_eventos = time.perf_counter()
@@ -1718,6 +1733,13 @@ class Game:
             elif (self.segunda is not None and self.segunda.es_suyo(evento)
                   and evento.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION)):
                 continue        # el mouse en la otra pantalla no cuenta
+            elif evento.type in EVENTOS_CONEXION:
+                # Conectar o desconectar un mando se anota siempre, también
+                # mientras carga: antes ahí se tiraba el evento, el mando que se
+                # desconectaba seguía ocupando su lugar y, al reconectarlo, ya
+                # no había lugar para él (el jugador quedaba sin control).
+                self.mandos.evento(evento)
+                self._sincronizar_mandos()
             elif self.carga is not None:
                 continue        # cargando: no se toca nada mientras el otro hilo arma la partida
             elif evento.type == pygame.KEYDOWN:
@@ -1729,13 +1751,10 @@ class Game:
                     self.pausa.mover_mouse(evento.pos)
                 else:
                     self._mouse_en_mapa(evento.pos)
-            elif evento.type in (pygame.JOYBUTTONDOWN, pygame.JOYHATMOTION,
-                                 pygame.JOYAXISMOTION, pygame.JOYDEVICEADDED,
-                                 pygame.JOYDEVICEREMOVED):
+            elif evento.type in EVENTOS_ENTRADA:
+                # JOY* y CONTROLLER* (mandos.py decide cuál cuenta de cada mando).
                 for puesto, accion in self.mandos.evento(evento):
                     self._tecla_mando(puesto, accion)
-                if evento.type in (pygame.JOYDEVICEADDED, pygame.JOYDEVICEREMOVED):
-                    self._sincronizar_mandos()
 
     def _tecla_mando(self, puesto, accion):
         """Un botón del mando: en partida y en la selección de rol es la tecla
@@ -1800,9 +1819,20 @@ class Game:
 
     def _sincronizar_mandos(self):
         """Se conectó o desconectó un mando con la partida andando."""
+        if self.current_screen == "controles":
+            # El mando que alguien ya había tomado y se desconectó queda libre:
+            # si no, ese jugador entraba a la partida con un mando que no está
+            # (y desde el teclado no había cómo soltarlo).
+            self.esquemas = [None if e in PUESTOS_CON_MANDO and not self.mandos.hay_mando(e) else e
+                             for e in self.esquemas]
         for jugador in self.jugadores:
             if jugador.esquema in PUESTOS_CON_MANDO:
+                tenia = jugador.con_mando
                 jugador.con_mando = self.mandos.hay_mando(jugador.esquema)
+                # Se le desconectó el que tenía (y no ha vuelto): mientras
+                # tanto la misión no da la partida por perdida (mision.actualizar).
+                jugador.mando_desconectado = not jugador.con_mando and (
+                    tenia or getattr(jugador, "mando_desconectado", False))
                 jugador.puede_moverse = jugador.con_mando and not jugador.eliminado
                 jugador.controles_nombre = (f"Mando {jugador.esquema - 1}" if jugador.con_mando
                                             else NOMBRE_CONTROLES[jugador.esquema])
@@ -1966,8 +1996,15 @@ class Game:
 
     def _jugador_con_mapa_en(self, pos):
         """(jugador, punto del mundo) si `pos` cae en el mapa de la Emisión de
-        alguien, o (None, None)."""
-        for jugador in self.jugadores:
+        alguien, o (None, None).
+
+        Solo los de la pantalla principal: el mouse de la otra no cuenta
+        (_manejar_eventos) y el `rect_mapa` de quien juega allá está en
+        coordenadas de esa pantalla. Con la ventana del alien nuevo abierta
+        el juego está detenido: tampoco."""
+        if self.presentacion is not None and self.presentacion.abierta:
+            return None, None
+        for jugador in self._reparto_pantallas()[0]:
             panel = jugador.panel
             if panel is None or panel.get("tipo") != "emision" or "rect_mapa" not in panel:
                 continue
@@ -2038,6 +2075,11 @@ class Game:
             self.abrir_cantidad()
         elif accion == "salir":
             self.running = False
+        elif accion == "red":
+            # Menú > Jugar en red (cliente_servidor/lanzador.py): tiene su
+            # propio bucle y vuelve aquí, al menú, cuando se acaba.
+            from cliente_servidor import lanzador
+            lanzador.abrir(self)
         elif accion == "logros":
             self.abrir_catalogo_logros()
         else:
@@ -2063,7 +2105,9 @@ class Game:
         elif self.current_screen == "dificultad":
             self.rects_opciones = render_dificultad(self.screen, self.dificultad_seleccionada)
         elif self.current_screen == "controles":
-            render_controles(self.screen, self.esquemas, NOMBRE_ESQUEMA, self.esquemas_libres(),
+            render_controles(self.screen, self.esquemas,
+                             [self.mandos.nombre_esquema(e, n) for e, n in enumerate(NOMBRE_ESQUEMA)],
+                             self.esquemas_libres(),
                              [self.mandos.hay_mando(e) for e in range(len(NOMBRE_ESQUEMA))])
         elif self.current_screen == "roles":
             viewports = calcular_viewports(self.ancho, self.alto, self.cantidad_jugadores)
