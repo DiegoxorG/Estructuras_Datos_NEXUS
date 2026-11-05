@@ -114,6 +114,13 @@ TECLAS_OK_MENU = {pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_e}
 # Lo que cuesta que te atrape un alien.
 PUNTOS_POR_SER_ATRAPADO = 10
 
+# Lo más que puede avanzar el juego en un cuadro. Si el bucle se traba (F9
+# abriendo la otra ventana, arrastrar la ventana en Windows, la laptop que se
+# suspende), el siguiente tick trae segundos enteros: sin este tope todo lo que
+# va con `dt` (el minijuego del escondite, sustos, celdas, eventos, director)
+# saltaba esos segundos de golpe.
+DT_MAXIMO_MS = 100
+
 # Controles de movimiento de cada puesto. Los puestos 3 y 4 van sin controles a
 # propósito: se dibujan en el mapa y se animan, pero no caminan, porque les toca
 # mando y eso todavía no está hecho.
@@ -1649,7 +1656,7 @@ class Game:
 
     def run(self):
         while self.running:
-            dt = self.clock.tick(DEFAULT_FPS)
+            dt = min(self.clock.tick(DEFAULT_FPS), DT_MAXIMO_MS)
             if self.mostrar_fps and self.cazar_tirones:
                 self.diagnostico.empezar()
             t_eventos = time.perf_counter()
