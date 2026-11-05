@@ -166,7 +166,10 @@ class Inventario(Counter):
         if self[tipo] > 0:
             self[tipo] -= 1
         if self[tipo] <= 0:
-            del self[tipo]
+            # dict.pop y no `del self[tipo]`: Counter.__delitem__ pregunta
+            # `tipo in self`, que aquí (__contains__ de abajo) es False con 0, y
+            # entonces no borraba nada: quedaba {"fruta": 0} en el inventario.
+            dict.pop(self, tipo, None)
 
     def __contains__(self, tipo):
         return self.get(tipo, 0) > 0

@@ -55,8 +55,28 @@ TECLAS = Teclas()
 pygame.key.get_pressed = lambda: TECLAS
 
 
+class MandoQuieto:
+    """Un mando conectado que nadie toca: así los jugadores 3 y 4 se mueven y
+    sus roles cuentan para la misión (sin mando no caminan y la misión hace
+    como si su rol no estuviera, ver prueba_roles_sin_mando.py)."""
+
+    def __init__(self, n):
+        self.n = n
+
+    def get_instance_id(self): return 700 + self.n
+    def init(self): pass
+    def get_button(self, i): return 0
+    def get_numhats(self): return 1
+    def get_hat(self, i): return (0, 0)
+    def get_numaxes(self): return 6
+    def get_axis(self, i): return -1.0 if i == 4 else 0.0
+
+
 def nueva_partida(roles, dificultad="normal"):
     g = App.Game()
+    if len(roles) > 2:
+        for puesto in (2, 3):
+            g.mandos.por_puesto[puesto] = MandoQuieto(puesto)
     def avanzar():
         for _ in range(80):
             if g.transitions.is_idle(): break

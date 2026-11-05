@@ -369,3 +369,4 @@ python pruebas/prueba_hitbox_editor.py  # zoom y paredes idénticas a las del ju
 - `Hitboxes/` -- los JSON que generan los editores (paredes, objetos del mapa,
   hitbox de cada rol). La nave es el unico mapa.
 - `Audio/`, `Fuentes/` -- efectos de sonido y la tipografia.
+- `docs/` -- documentacion tecnica: [estructuras](docs/estructuras.md), [arquitectura](docs/arquitectura.md) y [guia rapida](docs/guia_rapida.md).
