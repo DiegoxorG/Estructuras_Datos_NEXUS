@@ -27,6 +27,7 @@ nadie conectado durante `--espera` segundos (o con Ctrl+C, o con --segundos).
 """
 
 import argparse
+from collections import deque
 import os
 import random
 import secrets
@@ -50,6 +51,13 @@ from cliente_servidor.protocolo import (VERSION, HOST, PUERTO, HZ_JUEGO, CUADROS
 from cliente_servidor import estado as E
 
 DT_MS = 1000 // HZ_JUEGO      # 16, lo mismo que usa pruebas/simulador.py
+# Lo que se manda a cada jugador va por SU hilo de escritura (_escribir), no
+# por el del juego. Antes el hilo del juego hacía sendall con timeout de 1 s:
+# un cliente lento o un wifi que se traba congelaba la partida de todos
+# hasta 1 s, y si se pasaba, lo daba por desconectado a mitad de un mensaje
+# (sin cerrarle el socket: se quedaba "conectado" sin recibir nada).
+ENVIO_MAX_S = 6.0             # sin poder escribirle en este tiempo: se le cierra
+COLA_MAX = 4                  # más atrasado que esto: se tira y va una completa
 COMPRIMIR_DESDE = 1200        # bytes: una delta más grande va con zlib
 
 # Lo del Game que el espejo del cliente necesita para dibujar igual que el
@@ -96,7 +104,8 @@ class Buzon:
 
 
 class Puesto:
-    """Un jugador de la partida: su token y su conexión actual (si tiene)."""
+    """Un jugador de la partida: su token, su conexión actual (si tiene) y la
+    cola de lo que falta mandarle (la vacía su hilo de escritura)."""
 
     def __init__(self, numero):
         self.numero = numero
@@ -105,6 +114,8 @@ class Puesto:
         self.sock = None
         self.ocupado = False      # alguna vez se sentó alguien aquí
         self.generacion = 0       # cuántas conexiones ha tenido (la vieja se ignora)
+        self.cola = deque()       # bytes por mandar (instantáneas, avisos)
+        self.hay = threading.Condition()
 
 
 class Servidor:
@@ -275,9 +286,13 @@ class Servidor:
                 puesto.buzon.conectado = True
                 puesto.buzon.quiere_completa = True
                 puesto.buzon.mantener = set()
+            with puesto.hay:
+                puesto.cola.clear()           # (lo de la conexión anterior ya no sirve)
             puesto.sock = s
             threading.Thread(target=self._leer, args=(lector, puesto, generacion), daemon=True,
                              name=f"lector-J{puesto.numero + 1}").start()
+            threading.Thread(target=self._escribir, args=(s, puesto, generacion), daemon=True,
+                             name=f"escritor-J{puesto.numero + 1}").start()
             self.avisar(f"J{puesto.numero + 1} {'reconectado' if vuelve else 'conectado'} desde "
                         f"{direccion[0]}:{direccion[1]} ({hola.get('nombre', '')})")
         except (OSError, ConexionCerrada):
@@ -323,6 +338,27 @@ class Servidor:
             if puesto.generacion == generacion:
                 buzon.conectado = False
                 buzon.mantener = set()
+
+    def _escribir(self, s, puesto, generacion):
+        """El hilo que le manda a UN jugador lo que hay en su cola. Si no se le
+        puede escribir en ENVIO_MAX_S, se le cierra el socket: su cliente se da
+        cuenta y vuelve con su token (reconexión)."""
+        while True:
+            with puesto.hay:
+                while not puesto.cola and puesto.generacion == generacion and self.activo:
+                    puesto.hay.wait(0.5)
+                if puesto.generacion != generacion or not puesto.cola:
+                    return
+                datos = puesto.cola.popleft()
+            if not _mandar_todo(s, datos, ENVIO_MAX_S):
+                with puesto.buzon.candado:
+                    if puesto.generacion == generacion:
+                        puesto.buzon.conectado = False
+                        puesto.buzon.mantener = set()
+                self.avisar(f"J{puesto.numero + 1}: no se le pudo mandar nada en "
+                            f"{ENVIO_MAX_S:.0f} s; se cierra para que reconecte")
+                _cerrar(s)
+                return
 
     def _esperar_jugadores(self):
         while self.activo and not all(p.ocupado and p.buzon.conectado for p in self.puestos):
@@ -446,6 +482,7 @@ class Servidor:
             secciones[clave] = {str(i): (E.atributos(o) if hasattr(o, "__dict__") else E.extraer(o))
                                 for i, o in enumerate(lista)}
             secciones[clave]["n"] = len(lista)
+        secciones["pubs"] = _publicaciones(g)
         return secciones
 
     def _jugador(self, i, j):
@@ -515,6 +552,12 @@ class Servidor:
                 continue
             with buzon.candado:
                 entera, buzon.quiere_completa = buzon.quiere_completa, False
+            with puesto.hay:
+                if len(puesto.cola) >= COLA_MAX:
+                    # Va atrasado (wifi lento): lo viejo ya no sirve, mejor
+                    # una completa al día que una fila de deltas.
+                    puesto.cola.clear()
+                    entera = True
             if entera and bytes_completa is None:
                 bytes_completa = a_bytes(completa)
             datos = bytes_completa if entera else bytes_delta
@@ -523,14 +566,10 @@ class Servidor:
             self._mandar(puesto, datos)
 
     def _mandar(self, puesto, datos):
-        try:
-            puesto.sock.sendall(datos)
-        except (OSError, AttributeError):
-            # Incluye el timeout: un cliente que no lee se queda afuera
-            # en vez de congelar la partida de los demás.
-            with puesto.buzon.candado:
-                puesto.buzon.conectado = False
-                puesto.buzon.mantener = set()
+        """A la cola del jugador (no bloquea al juego: ver _escribir)."""
+        with puesto.hay:
+            puesto.cola.append(datos)
+            puesto.hay.notify()
 
     def _a_todos(self, mensaje):
         datos = a_bytes(mensaje)
@@ -566,12 +605,37 @@ class Servidor:
             self.avisar(f"instantáneas: delta media {sum(delta) / len(delta):.0f} B, máx {max(delta)} B; "
                         f"completa media {sum(entera) / len(entera):.0f} B, máx {max(entera)} B")
         self._a_todos({"tipo": "fin", "texto": texto})
+        limite = time.time() + 1.0          # que alcance a salir el `fin`
+        while time.time() < limite and any(p.cola for p in self.puestos if p.buzon.conectado):
+            time.sleep(0.02)
         self.activo = False
+        for puesto in self.puestos:
+            with puesto.hay:
+                puesto.hay.notify_all()
         for puesto in self.puestos:
             if puesto.sock is not None:
                 _cerrar(puesto.sock)
         if self.sock is not None:
             self.sock.close()
+
+
+def _mandar_todo(s, datos, plazo_s):
+    """Como sendall, pero sin cortar un mensaje a la mitad por el timeout del
+    socket (es de 1 s, para el lector): `send` con timeout no manda nada o
+    manda un pedazo, y se sigue desde ahí hasta `plazo_s`. False si no se pudo."""
+    vista = memoryview(datos)
+    limite = time.time() + plazo_s
+    while vista:
+        try:
+            enviados = s.send(vista)
+        except socket.timeout:
+            if time.time() > limite:
+                return False
+            continue
+        except OSError:
+            return False
+        vista = vista[enviados:]
+    return True
 
 
 def _cerrar(s):
@@ -595,6 +659,25 @@ def forzar_fase_final(g):
         j.personaje.sync_sprite_from_hitbox()
 
 
+def _publicaciones(g):
+    """Las publicaciones de NEXUS (el celular), una por clave (su id): en las
+    demás secciones viajan como referencia {"P": id} (estado.REFERENCIAS) y el
+    espejo las arma con esto. Antes el celular del cliente se quedaba con las
+    del principio: lo que se publicaba en la partida no le llegaba. `edad_ms`
+    va redondeada al segundo; si no, todas cambiarían en cada instantánea."""
+    red = getattr(g, "nexus", None)
+    if red is None:
+        return {}
+    salida = {}
+    for pub in red.publicaciones:
+        datos = E.atributos(pub)
+        if isinstance(datos.get("edad_ms"), (int, float)):
+            datos["edad_ms"] = int(datos["edad_ms"]) // 1000 * 1000
+        salida[str(pub.id)] = datos
+    salida["orden"] = [pub.id for pub in red.publicaciones]
+    return salida
+
+
 def _presentacion(g):
     """La ventana que presenta un alien nuevo (pausa a todos hasta que alguien
     la cierre con interactuar o habilidad)."""
@@ -602,8 +685,10 @@ def _presentacion(g):
     if p is None or not p.abierta:
         return None
     titulo, lineas = p.textos()
+    alien = p.actual["alien"]
     return {"titulo": titulo, "lineas": lineas, "jugador": g.jugadores.index(p.actual["jugador"]),
-            "x": p.actual["alien"].centro[0], "y": p.actual["alien"].centro[1]}
+            "x": alien.centro[0], "y": alien.centro[1], "tipo": p.actual["tipo"],
+            "alien": getattr(alien, "nombre", None), "ms": p.actual.get("ms", 0)}
 
 
 def _panel(jugador):

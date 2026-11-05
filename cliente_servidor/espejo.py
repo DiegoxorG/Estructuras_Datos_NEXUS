@@ -35,6 +35,7 @@ class Espejo:
         self.g = juego
         self.b = bienvenida
         self.aliens = {}           # nombre -> objeto Alien del espejo
+        self.pubs = {}             # id -> Publicacion del espejo (ver _publicaciones)
         self._reloj_ms = None      # para avanzar las animaciones con el tiempo real
         self._dt_ms = 0
         self.listo = False
@@ -76,6 +77,11 @@ class Espejo:
         ahora = pygame.time.get_ticks()
         self._dt_ms = 0 if self._reloj_ms is None else max(0, min(100, ahora - self._reloj_ms))
         self._reloj_ms = ahora
+        # Las referencias ({"P": id}, {"J": 1}, {"A": "Vigía 3"}) se cambian por
+        # los objetos de ESTE espejo (con dos sesiones en un proceso, como en las
+        # pruebas, cada una pone el suyo antes de aplicar).
+        E.RESOLVER = self._resolver
+        self._publicaciones(secciones.get("pubs"))
         glob = secciones.get("g", {})
         for clave, v in glob.items():
             if clave.startswith("G."):
@@ -119,6 +125,67 @@ class Espejo:
                     lista.append(E.a_python(d))
             if len(lista) > len(nuevos):
                 del lista[len(nuevos):]
+        self._presentacion(glob.get("presentacion"))
+        orden = (secciones.get("pubs") or {}).get("orden")
+        red = getattr(g, "nexus", None)
+        if red is not None and orden is not None:
+            red.publicaciones = [self._pub(i) for i in orden]
+
+    def _resolver(self, marca, identidad):
+        if marca == "P":
+            return self._pub(identidad)
+        if marca == "J":
+            jugadores = self.g.jugadores
+            return jugadores[identidad] if isinstance(identidad, int) and 0 <= identidad < len(jugadores) else None
+        if marca == "A":
+            return self.aliens.get(identidad)
+        return None
+
+    def _pub(self, identidad):
+        """La publicación `identidad` del espejo (se crea vacía si no estaba)."""
+        pub = self.pubs.get(identidad)
+        if pub is None:
+            from redes.nexus import Publicacion
+            pub = Publicacion.__new__(Publicacion)
+            pub.__dict__.update({"autor": None, "tipo": "normal", "texto": "", "falsa": False,
+                                 "rumor": None, "lugar": None, "desmentida": False, "foto": None,
+                                 "con_ubicacion": False, "desmiente": None, "suplantada": False,
+                                 "reportada": False, "via": {}, "alcanzados": set(), "edad_ms": 0})
+            pub.id = identidad
+            self.pubs[identidad] = pub
+        return pub
+
+    def _publicaciones(self, datos):
+        if not datos:
+            return
+        for clave, d in datos.items():
+            if clave == "orden" or not isinstance(d, dict):
+                continue
+            identidad = int(clave) if clave.lstrip("-").isdigit() else clave
+            E.aplicar(self._pub(identidad), d)
+
+    def _presentacion(self, datos):
+        """La ventana que presenta un alien. En el servidor `actual` tiene al
+        jugador y al alien (objetos), que no viajan: el dict llegaba sin ellos
+        y el dibujo se caía con KeyError 'jugador'. Aquí se arma con los del
+        espejo."""
+        p = getattr(self.g, "presentacion", None)
+        if p is None:
+            return
+        if not datos:
+            p.actual = None
+            return
+        indice = datos.get("jugador", 0)
+        jugador = self.g.jugadores[indice] if 0 <= indice < len(self.g.jugadores) else None
+        alien = self.aliens.get(datos.get("alien"))
+        if alien is None:       # (no está entre los vistos: uno del mismo tipo, o uno de mentira)
+            alien = next((a for a in self.aliens.values() if a.tipo == datos.get("tipo")), None)
+        if jugador is None or alien is None or not datos.get("tipo"):
+            p.actual = None
+            return
+        if datos.get("x") is not None and alien not in self.g.aliens:
+            alien.hitbox.center = (round(datos["x"]), round(datos["y"]))
+        p.actual = {"tipo": datos["tipo"], "alien": alien, "jugador": jugador, "ms": datos.get("ms", 0)}
 
     def _jugador(self, j, datos, pos):
         p = j.personaje

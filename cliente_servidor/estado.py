@@ -29,6 +29,57 @@ def _es_rect(valor):
     return type(valor).__name__ in ("Rect", "FRect")
 
 
+# Objetos que viajan como REFERENCIA (nombre de la clase -> (marca, atributo
+# que los identifica)): una publicación del celular, un jugador, un alien. Del
+# otro lado se cambian por el objeto del espejo que tiene esa identidad
+# (RESOLVER, lo pone cliente_servidor/espejo.py). Antes se perdían: una
+# opción del celular ("post", publicación) llegaba como ("post", None) y el
+# dibujo se caía; un dict con jugadores de clave (red.vistas[jugador]) no
+# viajaba. Como clave de un dict van como texto: "@J:1".
+REFERENCIAS = {"Publicacion": ("P", "id"), "Jugador": ("J", "puesto"),
+               "Alien": ("A", "nombre"), "Sombra": ("A", "nombre"), "Cambiaformas": ("A", "nombre")}
+MARCAS = {marca for marca, _ in REFERENCIAS.values()}
+RESOLVER = None          # fn(marca, identidad) -> objeto del espejo (o None)
+
+
+def _referencia(valor):
+    """(marca, identidad) si `valor` viaja como referencia, o None."""
+    regla = REFERENCIAS.get(type(valor).__name__)
+    if regla is None:
+        return None
+    identidad = getattr(valor, regla[1], None)
+    return None if identidad is None else (regla[0], identidad)
+
+
+def _resolver(marca, identidad):
+    return RESOLVER(marca, identidad) if RESOLVER is not None else None
+
+
+def _clave_texto(clave):
+    """La clave de un dict como texto (las referencias como "@J:1"), o None."""
+    if isinstance(clave, str):
+        return clave
+    ref = _referencia(clave)
+    if ref is not None:
+        return f"@{ref[0]}:{ref[1]}"
+    return None
+
+
+def _clave_python(clave):
+    """Lo inverso: "@J:1" -> el jugador del espejo (o la clave tal cual)."""
+    if isinstance(clave, str) and clave.startswith("@") and clave[1:2] in MARCAS and clave[2:3] == ":":
+        identidad = clave[3:]
+        if identidad.lstrip("-").isdigit():
+            identidad = int(identidad)
+        objeto = _resolver(clave[1], identidad)
+        return objeto if objeto is not None else clave
+    return clave
+
+
+def _es_ref(datos):
+    return (isinstance(datos, dict) and len(datos) == 1 and next(iter(datos)) in MARCAS)
+
+
 def extraer(valor, profundidad=4):
     """`valor` en forma de JSON, o NADA si no se puede (o no vale la pena)."""
     if valor is None or isinstance(valor, (bool, int, str)):
@@ -38,6 +89,9 @@ def extraer(valor, profundidad=4):
         return round(valor, 2)
     if _es_rect(valor):
         return {"R": [int(valor.x), int(valor.y), int(valor.w), int(valor.h)]}
+    ref = _referencia(valor)
+    if ref is not None:
+        return {ref[0]: ref[1]}
     if profundidad <= 0:
         return NADA
     if isinstance(valor, (set, frozenset)):
@@ -56,13 +110,15 @@ def extraer(valor, profundidad=4):
     if isinstance(valor, dict):
         salida = {}
         for clave, v in valor.items():
-            if not isinstance(clave, str) or clave in SALTAR:
+            clave = _clave_texto(clave)
+            if clave is None or clave in SALTAR:
                 continue
             e = extraer(v, profundidad - 1)
             if e is not NADA:
                 salida[clave] = e
-        # Las claves "R" y "S" solas se confundirían con un Rect o un set.
-        if len(salida) == 1 and next(iter(salida)) in ("R", "S"):
+        # Las claves "R" y "S" (o una marca de referencia) solas se
+        # confundirían con un Rect, un set o una referencia.
+        if len(salida) == 1 and next(iter(salida)) in ("R", "S", *MARCAS):
             return NADA
         return salida
     return NADA
@@ -88,8 +144,17 @@ def a_python(datos):
             import pygame
             return pygame.Rect(*datos["R"])
         if len(datos) == 1 and "S" in datos and isinstance(datos["S"], list):
-            return set(a_python(v) for v in datos["S"])
-        return {k: a_python(v) for k, v in datos.items()}
+            salida = set()
+            for v in datos["S"]:
+                try:
+                    salida.add(a_python(v))
+                except TypeError:          # (algo que no se puede meter en un set)
+                    pass
+            return salida
+        if _es_ref(datos):
+            marca, identidad = next(iter(datos.items()))
+            return _resolver(marca, identidad)
+        return {_clave_python(k): a_python(v) for k, v in datos.items()}
     if isinstance(datos, list):
         return [a_python(v) for v in datos]
     return datos
@@ -101,9 +166,12 @@ def _mezclar(actual, datos):
     if isinstance(datos, dict) and len(datos) == 1 and "R" in datos and _es_rect(actual):
         actual.update(*datos["R"])
         return actual
+    if _es_ref(datos):
+        return a_python(datos)
     if isinstance(datos, dict) and not (len(datos) == 1 and next(iter(datos)) in ("R", "S")):
         if isinstance(actual, dict):
             for clave, v in datos.items():
+                clave = _clave_python(clave)
                 actual[clave] = _mezclar(actual.get(clave), v)
             return actual
         if actual is not None and hasattr(actual, "__dict__"):

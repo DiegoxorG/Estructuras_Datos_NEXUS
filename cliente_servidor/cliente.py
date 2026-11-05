@@ -41,8 +41,10 @@ if RAIZ not in sys.path:
 import pygame
 
 from cliente_servidor.protocolo import (VERSION, HOST, PUERTO, MANTENER, PULSAR, LectorLineas,
-                                        ConexionCerrada, enviar, sin_nagle, Reconstructor, legible)
+                                        ConexionCerrada, enviar, sin_nagle, Reconstructor, legible,
+                                        a_bytes)
 from cliente_servidor.interpolacion import Interpolador
+from juego.mandos import EVENTOS_MANDO
 
 # Cada cuánto se repite la intención aunque no cambie (por si se perdió algo).
 REPETIR_INTENCION_S = 0.1
@@ -84,8 +86,15 @@ class Conexion:
         self.jugador = self.bienvenida["jugador"]
         self.token = self.bienvenida.get("token")
         self.situacion = "jugando"
+        # Lo que se manda va por otro hilo: si el wifi se traba, el que espera
+        # es ese hilo y no la ventana del juego (antes el sendall podía
+        # congelar el dibujo hasta 3 s).
+        self._salida = []
+        self._hay_salida = threading.Condition()
         threading.Thread(target=self._leer, daemon=True,
                          name=f"lector-J{self.jugador + 1}").start()
+        threading.Thread(target=self._escribir, daemon=True,
+                         name=f"escritor-J{self.jugador + 1}").start()
 
     @property
     def viva(self):
@@ -196,10 +205,35 @@ class Conexion:
             return sonidos
 
     def _enviar(self, mensaje):
-        try:
-            enviar(self.sock, mensaje)
-        except OSError:
-            pass                       # el lector se da cuenta y reconecta
+        """A la cola del hilo escritor (no bloquea)."""
+        datos = a_bytes(mensaje)
+        cond = getattr(self, "_hay_salida", None)
+        if cond is None:                # (todavía saludando)
+            try:
+                enviar(self.sock, mensaje)
+            except OSError:
+                pass
+            return
+        with cond:
+            self._salida.append(datos)
+            del self._salida[:-64]
+            cond.notify()
+
+    def _escribir(self):
+        while not self.cerrando:
+            with self._hay_salida:
+                while not self._salida and not self.cerrando:
+                    self._hay_salida.wait(0.5)
+                if not self._salida:
+                    return
+                datos = b"".join(self._salida)
+                self._salida = []
+            if self.situacion != "jugando":
+                continue                # reconectando: las intenciones viejas no sirven
+            try:
+                self.sock.sendall(datos)
+            except OSError:
+                pass                    # el lector se da cuenta y reconecta
 
     def mandar(self, mantener, pulsar):
         """Manda la intención si cambió, si hay algo pulsado o si ya pasó un rato."""
@@ -227,8 +261,15 @@ class Conexion:
             pass
 
     def cerrar(self):
+        try:
+            enviar(self.sock, {"tipo": "adios"})
+        except OSError:
+            pass
         self.cerrando = True
-        self._enviar({"tipo": "adios"})
+        cond = getattr(self, "_hay_salida", None)
+        if cond is not None:
+            with cond:
+                cond.notify_all()
         try:
             self.sock.close()
         except OSError:
@@ -279,8 +320,9 @@ class Entrada:
                 for accion in PULSAR:
                     if ev.key in teclas.get(accion, ()):
                         self.pulsados[i].append(accion)
-        elif ev.type in (pygame.JOYBUTTONDOWN, pygame.JOYHATMOTION, pygame.JOYAXISMOTION,
-                         pygame.JOYDEVICEADDED, pygame.JOYDEVICEREMOVED):
+        elif ev.type in EVENTOS_MANDO:
+            # JOY* y CONTROLLER*: con los mandos que SDL reconoce (Xbox, PS)
+            # los botones llegan como CONTROLLER*, y antes aquí se perdían.
             # Mandos.evento devuelve (esquema del mando, acción).
             for esquema, accion in self.mandos.evento(ev):
                 if esquema in self.esquemas and accion in PULSAR:
@@ -341,7 +383,8 @@ class Sesion:
         self.entrada = None
         self.simple = None
         self.motivo = None          # por qué terminó (None mientras sigue)
-        self.error_dibujo = None
+        self.error_dibujo = None    # el último error del espejo (para las pruebas)
+        self.errores_vistos = {}    # firma del error -> cuántas veces
 
     def conectar(self, pantalla=None):
         for i in range(len(self.esquemas)):
@@ -398,8 +441,21 @@ class Sesion:
         for ev in eventos:
             if ev.type == pygame.QUIT:
                 self.motivo = "salir"
+            elif (ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_RETURN,
+                                                            pygame.K_KP_ENTER, pygame.K_SPACE)
+                  and self._presentacion_abierta()):
+                # La ventana que presenta un alien se cierra con Esc, Enter o
+                # Espacio, como en el modo local. (Antes Esc aquí sacaba a esta
+                # laptop de la partida: "el segundo jugador se desconectó".)
+                if self.entrada is not None and self.entrada.pulsados:
+                    self.entrada.pulsados[0].append("volver")
             elif ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
-                self.motivo = "menu"
+                # En red no hay pausa: Esc saca a esta laptop de la partida.
+                # Para que no pase sin querer, hay que pulsarlo dos veces.
+                ahora = time.time()
+                if ahora - getattr(self, "_esc", 0) < 2.5:
+                    self.motivo = "menu"
+                self._esc = ahora
             else:
                 self.entrada.evento(ev)
         for conexion, (mantener, pulsar) in zip(self.conexiones, self.entrada.sacar()):
@@ -424,11 +480,18 @@ class Sesion:
             self._cartel(pantalla, "Se cortó la conexión: reconectando...")
         if glob.get("resultado"):
             self._resultado(pantalla, glob["resultado"], eventos)
+        elif time.time() - getattr(self, "_esc", 0) < 2.5:
+            self._cartel(pantalla, "Pulsa Esc otra vez para salir de la partida en red")
         return not self.motivo
+
+    def _presentacion_abierta(self):
+        g = getattr(self.espejo, "g", None) if self.espejo is not None else None
+        p = getattr(g, "presentacion", None)
+        return bool(p is not None and getattr(p, "abierta", False))
 
     def _dibujar(self, pantalla, conexion, secciones):
         locales = [c.jugador for c in self.conexiones]
-        if self.espejo.error is None and self.error_dibujo is None:
+        if self.espejo.error is None:
             try:
                 with conexion.candado:
                     interpolado = conexion.interpolador.ahora()
@@ -437,11 +500,19 @@ class Sesion:
                 self.espejo.dibujar(pantalla, locales)
                 return
             except Exception as error:
-                # Que un panel que el espejo no sabe dibujar no tumbe la
-                # partida: se sigue con el dibujo sencillo y se anota.
-                import traceback
-                traceback.print_exc()
+                # Que algo que el espejo no sabe dibujar no tumbe la partida:
+                # ESTE cuadro va con el dibujo sencillo y el siguiente se
+                # vuelve a intentar con el espejo. (Antes se quedaba en el
+                # sencillo para siempre: "todo perdió textura y el alien era
+                # un punto rojo".) Cada error distinto se anota una vez.
                 self.error_dibujo = error
+                firma = f"{type(error).__name__}: {str(error)[:80]}"
+                veces = self.errores_vistos.get(firma, 0)
+                self.errores_vistos[firma] = veces + 1
+                if veces == 0:
+                    import traceback
+                    traceback.print_exc()
+                    self.avisar(f"el espejo falló ({firma}); ese cuadro va sencillo")
         if self.simple is None:
             from cliente_servidor.dibujo_simple import Dibujo
             self.simple = Dibujo(conexion.bienvenida)
@@ -474,7 +545,7 @@ class Sesion:
         for ev in eventos:
             if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 self.motivo = "terminada"
-            elif ev.type == pygame.JOYBUTTONDOWN:
+            elif ev.type in (pygame.JOYBUTTONDOWN, getattr(pygame, "CONTROLLERBUTTONDOWN", -1)):
                 self.motivo = "terminada"
 
     def jugar(self, pantalla):
