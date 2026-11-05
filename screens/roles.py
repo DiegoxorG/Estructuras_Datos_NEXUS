@@ -176,14 +176,16 @@ def dibujar_encima(screen, offset, camara, dueño, extras, tiempo_ms):
             color = COLOR_BIOMANTE if otro.pulso < 45 else (255, 196, 64) if otro.pulso < 72 else COLOR_ALIEN
             pygame.draw.rect(screen, color, (x, y, int(48 * otro.pulso / 100), 8))
             pygame.draw.rect(screen, COLOR_BIOMANTE, (x, y, 48, 8), 1)
-            # Y sus vidas, para saber a quién curar.
-            from screens.paneles import dibujar_corazon, dibujar_infinito
-            if getattr(otro, "vidas_infinitas", False):
-                dibujar_corazon(screen, (x + 8, y - 10), 12, True)
-                dibujar_infinito(screen, (x + 8 + 20, y - 10), 12, (255, 230, 235), 2)
+            # Y sus vidas, para saber a quién curar: solo si le falta alguna
+            # (con todos sanos eran tres corazones encima de cada uno, todo el
+            # rato; en Fácil no se pierden, así que no salen).
+            from screens.paneles import dibujar_corazon
+            from entidades.jugador import VIDAS_INICIALES
+            maximo = getattr(otro, "vidas_max", VIDAS_INICIALES)
+            if getattr(otro, "vidas_infinitas", False) or getattr(otro, "vidas", maximo) >= maximo:
                 continue
-            for i in range(getattr(otro, "vidas", 0)):
-                dibujar_corazon(screen, (x + 8 + i * 16, y - 10), 12, True)
+            for i in range(maximo):
+                dibujar_corazon(screen, (x + 8 + i * 16, y - 10), 12, i < otro.vidas)
 
     if "intercepcion" in getattr(dueño, "efectos", {}):
         f = fuente_de_tamano(14)
@@ -322,9 +324,9 @@ def render_minimapa(screen, vista, dueño, extras):
         return
     # Abajo a la izquierda, justo encima del pulso: arriba a la derecha lo
     # tapaban los avisos, la barra de confianza y el celular.
-    from screens.paneles import rect_pulso
-    pulso = rect_pulso(screen, vista)
-    lado = int(min(vista.width * 0.34, pulso.top - 8 - (vista.y + 116), 260))
+    from screens.paneles import rect_pulso, alto_hud
+    pulso = rect_pulso(screen, vista, dueño)
+    lado = int(min(vista.width * 0.34, pulso.top - 8 - (alto_hud(vista, dueño) + 40), 260))
     if lado < 60:
         return
     clave = (id(mundo.imagen), lado, salas_selladas.clave_cache(mundo))

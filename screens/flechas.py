@@ -55,7 +55,7 @@ def cerca_del_borde(vista, punto):
     """¿`punto` (en pantalla) cae en la franja del borde de la vista? Ahí van
     el HUD, la barra de confianza, el pulso y el inventario, y un objetivo que
     está en pantalla pero ahí se pierde: también lleva flecha."""
-    adentro = pygame.Rect(vista.x + 110, vista.y + 200, vista.width - 220, vista.height - 330)
+    adentro = pygame.Rect(vista.x + 110, vista.y + 110, vista.width - 220, vista.height - 220)
     return not adentro.collidepoint(punto)
 
 

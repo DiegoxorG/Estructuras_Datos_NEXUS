@@ -25,6 +25,26 @@ CARPETA_HITBOXES = os.path.join(_RAIZ_PROYECTO, "Hitboxes")
 ESCALA_MAPA = 3
 
 
+def paredes_extra(mundo):
+    """Las paredes de ahora que no son del mapa fijo (`paredes_base`): las
+    puertas con código que siguen cerradas, básicamente.
+
+    Antes cada quien lo sacaba con `[p for p in mundo.paredes if p not in
+    mundo.paredes_base]`: buscar en una lista es recorrerla, así que eran
+    ~180 x 180 comparaciones de Rect por llamada. La flecha del objetivo lo
+    preguntaba 3 veces por jugador y por cuadro (Mision._llega) y en el PC de
+    Diego eso solo eran ~6 ms por cuadro desde que se abre la primera puerta.
+    Ahora el mapa fijo se guarda como un set de tuplas (se rehace si
+    `paredes_base` cambia, p. ej. al sellar salas)."""
+    base = mundo.paredes_base
+    guardado = mundo.__dict__.get("_base_como_set")
+    if guardado is None or guardado[0] is not base or guardado[1] != len(base):
+        guardado = (base, len(base), {tuple(r) for r in base})
+        mundo.__dict__["_base_como_set"] = guardado
+    fijas = guardado[2]
+    return [p for p in mundo.paredes if tuple(p) not in fijas]
+
+
 class Mundo:
     def __init__(self, nombre_mapa="Nave", escala=ESCALA_MAPA):
         self.nombre_mapa = nombre_mapa

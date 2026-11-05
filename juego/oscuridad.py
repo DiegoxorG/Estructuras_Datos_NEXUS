@@ -48,7 +48,7 @@ ANGULO_DIRECCION = {
 }
 
 _capas = {}
-_ultimo = {}          # vista.topleft -> (clave, mapa de luz ya agrandado)
+_ultimo = {}          # (vista.topleft, id del dueño) -> (clave, mapa de luz ya agrandado)
 _halos = {}
 
 
@@ -87,6 +87,20 @@ def _halo(radio, inicio=0.35):
     return _halos[(radio, inicio)]
 
 
+_TRANSPARENTE = (255, 0, 255)
+
+
+def _halo_con_piso(radio, inicio, piso):
+    """El halo, pero sin bajar de `piso` (gris): lo mismo que pegarlo con
+    BLEND_RGB_MAX sobre un fondo de ese gris, ya hecho una vez."""
+    clave = ("piso", max(8, int(radio)), inicio, piso)
+    if clave not in _halos:
+        halo = _halo(radio, inicio).copy()
+        halo.fill(piso, special_flags=pygame.BLEND_RGB_MAX)
+        _halos[clave] = halo
+    return _halos[clave]
+
+
 class Linterna:
     """Hacia dónde apunta la linterna de un jugador. Gira suave, no de golpe."""
 
@@ -99,7 +113,10 @@ class Linterna:
         self.angulo += diferencia * 0.2
 
 
-def dibujar(screen, vista, camara, dueño, jugadores, apagon=False, vision=None):
+MARGEN_LUZ = 32              # px de más por lado del mapa de luz guardado (con luz)
+
+
+def dibujar(screen, vista, camara, dueño, jugadores, apagon=False, vision=None, origen=None):
     """Oscurece el viewport `vista` dejando ver lo que ve `dueño`.
 
     Se arma un "mapa de luz" en grises (blanco = se ve todo, casi negro = no se
@@ -107,36 +124,66 @@ def dibujar(screen, vista, camara, dueño, jugadores, apagon=False, vision=None)
     barato que mezclar una capa transparente del tamaño de la pantalla.
 
     `vision` es el polígono de visión del dueño (vision.py), en coordenadas
-    del mundo. Con luz, adentro se ve todo (con el borde del radio difuminado)
-    y afuera queda en penumbra. En un apagón la luz es la de la linterna y los
-    halos, pero igual recortada por el polígono: no alumbra tras las paredes.
+    del mundo, y `origen` desde dónde se calculó. Con luz, adentro se ve todo
+    (con el borde del radio difuminado) y afuera queda en penumbra. En un
+    apagón la luz es la de la linterna y los halos, pero igual recortada por
+    el polígono: no alumbra tras las paredes.
     """
-    # Con luz y sin que nada se haya movido (cámara, dueño, su campo de
-    # visión), el mapa de luz es el mismo del cuadro anterior: se reusa.
+    # Con luz, el mapa de luz depende solo del campo de visión (que cambia
+    # cada PASO_ORIGEN px que se mueve el dueño, o menos seguido con 3-4
+    # jugadores), no de la cámara: se arma "pegado al mundo", un poco más
+    # grande que la vista (MARGEN_LUZ por lado), y mientras el campo sea el
+    # mismo y la cámara no se salga del margen, cada cuadro solo se pega el
+    # pedazo que toca. Antes se rehacía entero en cada cuadro que la cámara se
+    # movía (caminando, siempre): ~1 ms por vista aquí, varios en la laptop.
+    # Por vista Y dueño: con dos pantallas, J1 y J3 tienen su vista en el
+    # mismo rincón de su pantalla y se pisaban el guardado.
     clave = None
+    zona = camara
     if not apagon:
-        clave = (vista.size, tuple(camara.topleft), dueño.hitbox.center, dueño.escondido,
+        centro_luz = origen if origen is not None else dueño.hitbox.center
+        clave = (vista.size, tuple(centro_luz), dueño.escondido,
                  id(vision), len(vision) if vision else 0, vision[0] if vision else None)
-        guardado = _ultimo.get(vista.topleft)
+        guardado = _ultimo.get((vista.topleft, id(dueño)))
         if guardado is not None and guardado[0] == clave:
-            screen.blit(guardado[1], vista.topleft, special_flags=pygame.BLEND_RGB_MULT)
-            return
+            dx, dy = camara.x - guardado[2][0], camara.y - guardado[2][1]
+            if (0 <= dx and dx + vista.width <= guardado[1].get_width()
+                    and 0 <= dy and dy + vista.height <= guardado[1].get_height()):
+                screen.blit(guardado[1], vista.topleft, pygame.Rect(dx, dy, vista.width, vista.height),
+                            special_flags=pygame.BLEND_RGB_MULT)
+                return
+        # La zona arranca en múltiplos de ESCALA_LUZ del mundo: así los
+        # "píxeles" del mapa chico caen siempre en el mismo lugar del mundo y
+        # el borde de las sombras no tiembla al caminar (antes iba pegado a la
+        # cámara y se corría de a 1-3 px).
+        e = ESCALA_LUZ
+        x0 = (camara.x - MARGEN_LUZ) // e * e
+        y0 = (camara.y - MARGEN_LUZ) // e * e
+        # (y mide un múltiplo de 2*ESCALA_LUZ: el mapa chico, el de la mitad y
+        # el grande calzan exacto)
+        ancho = -(-(vista.width + 2 * MARGEN_LUZ + e) // (2 * e)) * 2 * e
+        alto = -(-(vista.height + 2 * MARGEN_LUZ + e) // (2 * e)) * 2 * e
+        zona = pygame.Rect(x0, y0, ancho, alto)
 
     e = ESCALA_LUZ
-    chico = (max(1, vista.width // e), max(1, vista.height // e))
+    chico = (max(1, zona.width // e), max(1, zona.height // e))
     luz = _capa(chico)
-    luz.fill((0, 0, 0))
     factor = FACTOR_APAGON if apagon else 1.0
     oscuro = OPACIDAD_APAGON if apagon else OPACIDAD
+    # Lo que no se ve tampoco queda negro del todo: el mapa se adivina. El
+    # mapa empieza en ese gris (antes empezaba negro y al final se le pasaba
+    # un fill con BLEND_RGB_MAX, que es de los fill lentos).
+    piso = _gris(oscuro)
+    luz.fill(piso)
 
     def local(p):
-        return ((p[0] - camara.x) / e, (p[1] - camara.y) / e)
+        return ((p[0] - zona.x) / e, (p[1] - zona.y) / e)
 
     if not apagon:
         # Con luz: un círculo grande, parejo hasta cerca del borde.
         radio = RADIO_VISION * (FACTOR_ESCONDIDO if dueño.escondido else 1.0) / e
-        halo = _halo(radio, inicio=0.7)
-        x, y = local(dueño.hitbox.center)
+        halo = _halo_con_piso(radio, 0.7, piso)
+        x, y = local(centro_luz)
         luz.blit(halo, (int(x) - halo.get_width() // 2, int(y) - halo.get_height() // 2))
 
     # El cono de la linterna: capas del más ancho y oscuro al más angosto y
@@ -164,12 +211,17 @@ def dibujar(screen, vista, camara, dueño, jugadores, apagon=False, vision=None)
         luz.blit(halo, (int(x) - halo.get_width() // 2, int(y) - halo.get_height() // 2),
                  special_flags=pygame.BLEND_RGB_MAX)
 
-    # Recorte: lo que tapan las paredes queda a oscuras.
+    # Recorte: lo que tapan las paredes queda a oscuras. Una capa del gris
+    # de "no se ve" con el polígono pintado en el color transparente
+    # (colorkey): pegada encima tapa solo lo de afuera. Es lo mismo que
+    # multiplicar por una máscara blanco/negro y subir al gris, con un blit
+    # normal en vez de dos operaciones de mezcla.
     if vision is not None and len(vision) >= 3:
         mascara = _capa(chico, "mascara")
-        mascara.fill((0, 0, 0))
-        pygame.draw.polygon(mascara, (255, 255, 255), [local(p) for p in vision])
-        luz.blit(mascara, (0, 0), special_flags=pygame.BLEND_RGB_MULT)
+        mascara.set_colorkey(_TRANSPARENTE)
+        mascara.fill(piso)
+        pygame.draw.polygon(mascara, _TRANSPARENTE, [local(p) for p in vision])
+        luz.blit(mascara, (0, 0))
 
     # Halos de los compañeros (en el apagón cada uno lleva su linterna; se ven
     # entre ellos aunque haya una pared en medio).
@@ -182,16 +234,30 @@ def dibujar(screen, vista, camara, dueño, jugadores, apagon=False, vision=None)
             luz.blit(halo, (int(x) - halo.get_width() // 2, int(y) - halo.get_height() // 2),
                      special_flags=pygame.BLEND_RGB_MAX)
 
-    # Lo que no se ve tampoco queda negro del todo: el mapa se adivina.
-    luz.fill(_gris(oscuro), special_flags=pygame.BLEND_RGB_MAX)
-
+    tamano = zona.size
     if clave is not None:
-        guardado = _ultimo.get(vista.topleft)
-        grande = guardado[1] if guardado is not None and guardado[1].get_size() == vista.size \
-            else pygame.Surface(vista.size)
-        _ultimo[vista.topleft] = (clave, grande)
+        guardado = _ultimo.get((vista.topleft, id(dueño)))
+        grande = guardado[1] if guardado is not None and guardado[1].get_size() == tamano \
+            else pygame.Surface(tamano)
+        if len(_ultimo) > 16:       # dueños de partidas viejas
+            _ultimo.clear()
+        _ultimo[(vista.topleft, id(dueño))] = (clave, grande, zona.topleft)
     else:
-        _ultimo.pop(vista.topleft, None)
-        grande = _grande(vista.size)
-    pygame.transform.smoothscale(luz, vista.size, grande)
-    screen.blit(grande, vista.topleft, special_flags=pygame.BLEND_RGB_MULT)
+        _ultimo.pop((vista.topleft, id(dueño)), None)
+        grande = _grande(tamano)
+    # Agrandar con suavizado hasta la mitad y el último x2 sin suavizar: el
+    # smoothscale cuesta según lo que produce, y hasta el tamaño completo era
+    # lo más caro de la oscuridad (~1.5 ms por vista aquí, el doble en el PC de
+    # Diego, x4 vistas con dos pantallas). En un degradado ya suave, bloques de
+    # 2 px no se notan. La mitad se arregla para que dé exacto al doblar.
+    medio = _capa(((tamano[0] + 1) // 2, (tamano[1] + 1) // 2), "medio")
+    pygame.transform.smoothscale(luz, medio.get_size(), medio)
+    doble = (medio.get_width() * 2, medio.get_height() * 2)
+    if doble == tamano:
+        pygame.transform.scale(medio, tamano, grande)
+    else:
+        pygame.transform.scale(medio, doble, _capa(doble, "doble"))
+        grande.blit(_capa(doble, "doble"), (0, 0))
+    screen.blit(grande, vista.topleft, pygame.Rect(camara.x - zona.x, camara.y - zona.y,
+                                                    vista.width, vista.height),
+                special_flags=pygame.BLEND_RGB_MULT)

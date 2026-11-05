@@ -376,6 +376,19 @@ class Mision:
             return
         mundo = self.juego.mundo
         principal = self.puerta
+        if hasattr(mundo, "paredes_base"):
+            # Con la navegación (pedazos conectados ya calculados en C), como
+            # Mision._llega. Antes era notas_antes_de_la_puerta: un BFS en
+            # Python por todo el mapa, celda por celda, que al abrir una puerta
+            # congelaba el juego ~0.4 s en el PC de Diego.
+            from juego import navegacion
+            from juego.mundo import paredes_extra
+            nav = navegacion.de_mundo(mundo, 34, 20)
+            extra = [p for p in paredes_extra(mundo) if principal is None or p != principal]
+            inicio = (desde[0] + 24, desde[1] + 10)
+            llega = [r for r in self._objetivos if nav.conectados(inicio, r.center, sellos=False, extra=extra)]
+            self._tapado = len(llega) < len(self._objetivos)
+            return
         quitar = principal is not None and principal in mundo.paredes
         if quitar:       # como si la de la prisión ya estuviera abierta
             mundo.paredes.remove(principal)
@@ -563,9 +576,9 @@ class Mision:
         if not hasattr(mundo, "paredes_base"):
             return True
         from juego import navegacion
+        from juego.mundo import paredes_extra
         nav = navegacion.de_mundo(mundo, 34, 20)
-        extra = [p for p in mundo.paredes if p not in mundo.paredes_base]
-        return nav.conectados(jugador.hitbox.center, punto, extra=extra)
+        return nav.conectados(jugador.hitbox.center, punto, extra=paredes_extra(mundo))
 
     def _guiar_a_puerta(self, jugador, puerta, cerca):
         leyo = any(jugador in n["leida_por"] and puerta["codigo"] in n["texto"] for n in self.notas)

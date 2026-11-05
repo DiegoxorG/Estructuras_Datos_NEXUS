@@ -90,6 +90,17 @@ class TransitionManager:
         else:  # fade_in
             alpha = int(255 * (1.0 - progress))
 
+        # alfa 0 no tapa nada; 255 es negro entero: un fill. Las dos puntas
+        # eran lo más caro: en pygame 2.6 pegar una capa con set_alpha(255)
+        # va por un camino lento (~11 ms a 1536x960 en la nube, varias veces
+        # más en la laptop), y así quedaba todo el cuadro en que la pantalla
+        # está negra del todo (y en las dos pantallas).
+        if alpha <= 0:
+            return
+        if alpha >= 255:
+            screen.fill((0, 0, 0))
+            return
+
         w, h = screen.get_size()
         if self._overlay is None or self._overlay.get_size() != (w, h):
             self._overlay = pygame.Surface((w, h))

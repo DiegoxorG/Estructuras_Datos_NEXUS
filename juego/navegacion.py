@@ -18,6 +18,7 @@ Forjador) no está en la cuadrícula fija: se revisa al buscar cada camino.
 """
 
 import heapq
+import time
 from collections import deque
 
 import pygame
@@ -29,6 +30,23 @@ PESO_ESTIMADO = 1.6      # A* "con prisa": revisa muchas menos celdas y el camin
                          # sale casi igual (después se estira en línea recta)
 PRESUPUESTO_CUADRO = 1500  # celdas por cuadro de un camino "por partes" (prisioneros)
 PRESUPUESTO_ALIEN = 4000   # lo mismo para los aliens (tienen más prisa)
+# Además del tope de celdas, un tope de TIEMPO para todas las búsquedas "por
+# partes" de un cuadro juntas: 4000 celdas eran ~4 ms en la nube pero 15-35 ms
+# en el PC de Diego (el tirón de cuando un alien sale a buscar lejos, p. ej.
+# al cebo de una publicación falsa). Medido en ms reales, en un PC lento se
+# reparte en más cuadros en vez de frenar uno. Cada búsqueda avanza al menos
+# MINIMO_CELDAS por cuadro para no quedarse quieta si hay varias.
+LIMITE_MS_CUADRO = 3.0
+MINIMO_CELDAS = 200
+_gasto_cuadro = {"cuadro": None, "ms": 0.0}
+
+
+def _gastado(ms=0.0):
+    """Los ms que ya usaron este cuadro las búsquedas por partes (sumando `ms`)."""
+    if _gasto_cuadro["cuadro"] != Navegacion.cuadro:
+        _gasto_cuadro["cuadro"], _gasto_cuadro["ms"] = Navegacion.cuadro, 0.0
+    _gasto_cuadro["ms"] += ms
+    return _gasto_cuadro["ms"]
 
 
 class Navegacion:
@@ -54,7 +72,8 @@ class Navegacion:
         puertas para dos cerradas y (si `sellos`) los sellos del Forjador, que
         solo frenan a los aliens: los prisioneros los cruzan (sellos=False)."""
         mundo = self.mundo
-        extra = [p for p in mundo.paredes if p not in mundo.paredes_base]
+        from juego.mundo import paredes_extra
+        extra = paredes_extra(mundo)
         if sellos:
             extra += list(getattr(mundo, "bloqueos_alien", []))
         extra += list(getattr(mundo, "puertas_alien", []))
@@ -370,12 +389,17 @@ class Navegacion:
         cerradas = set()
         costo_de = costo.get
         peso, resta = PESO_ESTIMADO / p, diag - 2
+        reloj = time.perf_counter
+        desde_ms = reloj()
         while abiertos and len(previo) < MAX_NODOS:
             if presupuesto is not None:
                 cuenta += 1
-                if cuenta >= presupuesto:
+                if cuenta >= presupuesto or (cuenta >= MINIMO_CELDAS and not cuenta & 63 and
+                                              _gastado() + (reloj() - desde_ms) * 1000 > LIMITE_MS_CUADRO):
+                    _gastado((reloj() - desde_ms) * 1000)
                     cuenta = 0
                     yield
+                    desde_ms = reloj()
             _, _, c = heappop(abiertos)
             if c in cerradas:
                 continue           # una entrada vieja de la cola: ya se revisó

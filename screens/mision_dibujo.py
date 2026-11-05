@@ -195,7 +195,8 @@ def render_progreso(screen, vista, jugador):
     texto, valor = progreso
     ancho = min(320, vista.width - 80)
     x = vista.centerx - ancho // 2
-    y = vista.bottom - 150
+    from screens.paneles import tope_abajo
+    y = min(vista.bottom - 150, tope_abajo(vista, jugador) - 66)   # encima de la pista
     fondo = pygame.Surface((ancho + 20, 46), pygame.SRCALPHA)
     fondo.fill((14, 15, 28, 220))
     screen.blit(fondo, (x - 10, y - 26))

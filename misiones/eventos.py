@@ -125,7 +125,8 @@ class GestorEventos:
             desde = libres[0].hitbox.center
         from juego import navegacion
         nav = navegacion.de_mundo(mundo, 34, 20)
-        extra = [p for p in mundo.paredes if p not in mundo.paredes_base]
+        from juego.mundo import paredes_extra
+        extra = paredes_extra(mundo)
         extra += [p["rect"] for p in getattr(juego, "puertas_dobles", []) if not p["abierta"]]
         extra += [c["rect"] for c in getattr(juego, "compuertas", []) if c["cerrada"]]
         return [caja for caja in self.cajas

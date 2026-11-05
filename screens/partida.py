@@ -5,18 +5,21 @@ personajes se dibujan en todos los viewports, así que cada jugador ve al otro
 moverse por el mapa.
 
 Los layouts siguen el CLAUDE.md: con dos jugadores la pantalla se parte en
-vertical (izquierda y derecha); con tres, dos arriba y uno abajo a lo ancho;
-con cuatro, en cuartos.
+vertical (izquierda y derecha); con tres y con cuatro, en cuartos. Con tres el
+cuarto cuadro es el panel del equipo (render_panel_global): objetivo, barra de
+confianza, avisos de la IA y de eventos, y cómo va cada uno.
 """
 
 import math
 import os
+from contextlib import contextmanager
 
 import pygame
 
 from juego.fuentes import fuente, fuente_de_tamano
 from juego import oscuridad
 from juego import vision
+from juego import navegacion
 from screens.infiltrado_dibujo import dibujar_pruebas
 from misiones import puertas
 from misiones.eventos import dibujar_cajas, dibujar_brillo_caja, dibujar_flecha_caja
@@ -24,8 +27,10 @@ from screens import flechas
 from juego import salas_selladas
 from screens.paneles import (render_panel, render_mosaico, render_hud, render_mensaje, render_pista_zona,
                              render_pulso, render_tension, render_minijuego,
-                             render_escondido, render_vidas, render_eliminado,
-                             render_inventario)
+                             render_escondido, render_eliminado,
+                             render_inventario, fila_bajo_hud, partir_lineas,
+                             dibujar_corazon, dibujar_infinito, _recortar, COLOR_SALA,
+                             _icono_lugar)
 from juego.ambiente import temblor, dibujar_susto
 from screens.panel_habilidades import render_panel_habilidades
 from screens import roles as dibujo_roles
@@ -46,12 +51,36 @@ COLOR_COLISION = (230, 60, 60)
 COLOR_INTERACCION = (255, 210, 40)
 
 
+# Modo dos pantallas (juego/segunda_pantalla.py): mientras se dibuja la
+# segunda pantalla con UNA sola vista (J3 de 3 jugadores), esa vista va en la
+# mitad izquierda y el panel del equipo en la derecha.
+_una_con_panel = False
+
+
+@contextmanager
+def pantalla_secundaria():
+    """Mientras dura, una pantalla con una sola vista lleva el panel al lado."""
+    global _una_con_panel
+    previo, _una_con_panel = _una_con_panel, True
+    try:
+        yield
+    finally:
+        _una_con_panel = previo
+
+
+def tiene_panel(cantidad):
+    """¿Esta pantalla, con `cantidad` vistas, lleva el panel del equipo?"""
+    return cantidad == 3 or (cantidad == 1 and _una_con_panel)
+
+
 def calcular_viewports(ancho, alto, cantidad):
     """Divide la pantalla según cuántos jugadores haya (ver CLAUDE.md)."""
+    mitad_x = ancho // 2
     if cantidad <= 1:
+        if _una_con_panel:
+            return [pygame.Rect(0, 0, mitad_x, alto)]
         return [pygame.Rect(0, 0, ancho, alto)]
 
-    mitad_x = ancho // 2
     if cantidad == 2:
         # Jugador 1 a la izquierda, jugador 2 a la derecha.
         return [
@@ -60,42 +89,69 @@ def calcular_viewports(ancho, alto, cantidad):
         ]
 
     mitad_y = alto // 2
-    if cantidad == 3:
-        # Jugadores 1 y 2 arriba, lado a lado; el 3 abajo ocupando todo el
-        # ancho. Queda como una Y invertida: dos ramas arriba y el tronco
-        # abajo.
-        return [
-            pygame.Rect(0, 0, mitad_x, mitad_y),
-            pygame.Rect(mitad_x, 0, ancho - mitad_x, mitad_y),
-            pygame.Rect(0, mitad_y, ancho, alto - mitad_y),
-        ]
-
     # Cuatro: 1 arriba-izq, 2 arriba-der, 3 abajo-izq, 4 abajo-der.
-    return [
+    cuartos = [
         pygame.Rect(0, 0, mitad_x, mitad_y),
         pygame.Rect(mitad_x, 0, ancho - mitad_x, mitad_y),
         pygame.Rect(0, mitad_y, mitad_x, alto - mitad_y),
         pygame.Rect(mitad_x, mitad_y, ancho - mitad_x, alto - mitad_y),
     ]
+    if cantidad == 3:
+        # Tres: los mismos cuartos y el de abajo a la derecha queda para el
+        # panel del equipo (rect_panel_global). Antes el 3 iba abajo a todo
+        # lo ancho: veía el doble de mapa hacia los lados que los otros dos
+        # y la misma altura, y su vista se sentía aplastada.
+        return cuartos[:3]
+    return cuartos
+
+
+def rect_panel_global(ancho, alto, cantidad=3):
+    """Donde va lo que es de todo el equipo: el cuarto cuadro con 3 jugadores,
+    o la mitad derecha de la segunda pantalla si ahí juega uno solo."""
+    mitad_x, mitad_y = ancho // 2, alto // 2
+    if cantidad == 1 and _una_con_panel:
+        return pygame.Rect(mitad_x, 0, ancho - mitad_x, alto)
+    return pygame.Rect(mitad_x, mitad_y, ancho - mitad_x, alto - mitad_y)
+
+
+def _fuentes_panel(panel):
+    grande = fuente_de_tamano(max(14, min(22, panel.width // 42, panel.height // 24)))
+    chica = fuente_de_tamano(max(11, min(15, panel.width // 62)))
+    return grande, chica
+
+
+def arriba_confianza_panel(panel):
+    """Cuánto baja la barra de confianza dentro del panel del equipo: debajo
+    del objetivo (que se reserva dos renglones)."""
+    grande, chica = _fuentes_panel(panel)
+    return 18 + chica.get_linesize() + 2 * grande.get_linesize() + 14
 
 
 def render_partida(screen, mundo, jugadores, zonas=(), segundos_restantes=None,
-                   mostrar_hitboxes=False, aliens=(), escondites=(), extras=None):
-    """Dibuja un viewport por jugador, cada uno con su cámara, HUD y paneles."""
+                   mostrar_hitboxes=False, aliens=(), escondites=(), extras=None, dueños=None):
+    """Dibuja un viewport por jugador, cada uno con su cámara, HUD y paneles.
+
+    `dueños`: de quiénes son las vistas de ESTA pantalla (en el modo dos
+    pantallas, J1 y J2 en la laptop y el resto en la otra). En el mundo se
+    dibujan siempre todos los `jugadores`."""
     ancho, alto = screen.get_size()
-    viewports = calcular_viewports(ancho, alto, len(jugadores))
+    dueños = list(jugadores) if dueños is None else list(dueños)
+    cantidad = len(dueños)
+    viewports = calcular_viewports(ancho, alto, cantidad)
     extras = dict(extras or {})
     extras.setdefault("aliens", aliens)
     extras.setdefault("escondites", escondites)
     extras.setdefault("jugadores", jugadores)
     extras.setdefault("mundo", mundo)
-    screen.fill(COLOR_SEPARADOR)
+    # (Antes se pintaba toda la pantalla de fondo en cada cuadro: las vistas
+    # ya la tapan entera con el mapa; si el mapa es más chico que una vista,
+    # _dibujar_vista pinta el fondo de esa vista.)
 
     # La barra de confianza va encima de todas las vistas: lo de cada jugador
     # que caería debajo de ella se corre (screens/paneles.fila_vidas).
-    barra = (dibujo_celular.rect_confianza(screen, len(jugadores))
+    barra = (dibujo_celular.rect_confianza(screen, cantidad, extras.get("nexus"))
              if extras.get("nexus") is not None else None)
-    for indice, jugador in enumerate(jugadores):
+    for indice, jugador in enumerate(dueños):
         if indice >= len(viewports):
             break
         vista = viewports[indice]
@@ -110,9 +166,8 @@ def render_partida(screen, mundo, jugadores, zonas=(), segundos_restantes=None,
         screen.set_clip(vista)
         render_escondido(screen, vista, jugador)
         render_tension(screen, vista, jugador)
-        render_hud(screen, vista, jugador, segundos_restantes)
+        render_hud(screen, vista, jugador, segundos_restantes, tapado)
         dibujo_celular.render_aviso_celular(screen, vista, jugador, extras.get("nexus"))
-        render_vidas(screen, vista, jugador, tapado)
         render_escolta(screen, vista, jugador, extras.get("escolta"), tapado, extras.get("nexus"))
         render_pista_zona(screen, vista, jugador)
         if jugador.panel is not None and jugador.panel.get("tipo") == "habilidades":
@@ -138,20 +193,23 @@ def render_partida(screen, mundo, jugadores, zonas=(), segundos_restantes=None,
         render_eliminado(screen, vista, jugador)
         screen.set_clip(clip_previo)
 
+    if tiene_panel(cantidad):
+        render_panel_global(screen, rect_panel_global(ancho, alto, cantidad), jugadores, extras)
     _dibujar_separadores(screen, viewports)
-    dibujo_celular.render_confianza(screen, extras.get("nexus"), len(jugadores))
+    dibujo_celular.render_confianza(screen, extras.get("nexus"), cantidad)
     render_evento(screen, extras.get("eventos"),
-                  dibujo_celular.desplazamiento_avisos(screen, len(jugadores), extras.get("nexus")))
+                  *dibujo_celular.columna_avisos(screen, cantidad, extras.get("nexus")))
     if mostrar_hitboxes:
         _dibujar_leyenda(screen, mundo, jugadores)
 
 
-def render_terminales_encima(screen, jugadores):
+def render_terminales_encima(screen, jugadores, dueños=None):
     """La Terminal NEXUS (un mosaico que ocupa casi toda la vista) se dibuja
     al final, encima de la barra de confianza y del cartel de la IA, que si no
     le tapaban la parte de arriba."""
-    viewports = calcular_viewports(*screen.get_size(), len(jugadores))
-    for vista, jugador in zip(viewports, jugadores):
+    dueños = list(jugadores) if dueños is None else list(dueños)
+    viewports = calcular_viewports(*screen.get_size(), len(dueños))
+    for vista, jugador in zip(viewports, dueños):
         if jugador.panel is not None and jugador.panel.get("mosaico"):
             clip_previo = screen.get_clip()
             screen.set_clip(vista)
@@ -197,6 +255,8 @@ def _dibujar_vista(screen, vista, mundo, jugadores, dueño, zonas, mostrar_hitbo
     # En pantallas muy grandes un viewport puede ser más ancho o alto que el
     # mapa; en ese caso se centra lo que hay en vez de dejarlo pegado a un borde.
     destino = list(vista.topleft)
+    if not pygame.Rect(0, 0, mundo.ancho, mundo.alto).contains(camara):
+        screen.fill(COLOR_SEPARADOR, vista)     # (mapa más chico, o el temblor lo saca del borde)
     if camara.width > mundo.ancho:
         destino[0] += (camara.width - mundo.ancho) // 2
     if camara.height > mundo.alto:
@@ -257,8 +317,13 @@ def _dibujar_vista(screen, vista, mundo, jugadores, dueño, zonas, mostrar_hitbo
     todos_los_aliens = list(aliens)      # (los que no ve, la Sintonía los oye: pasos rosados)
     npcs = list((extras or {}).get("npcs", ()))
     if (extras or {}).get("vision") and not mostrar_hitboxes:
+        # Con 3-4 jugadores cada vista recalcula su campo un cuadro sí y otro
+        # no (la mitad en cada cuadro, turnándose): vision.campo_de.
+        todos = list(jugadores)
+        turno = (todos.index(dueño) if dueño in todos else 0) + navegacion.Navegacion.cuadro
         campo = vision.campo_de(dueño.hitbox.center, vision.obstaculos(
-            mundo, extras.get("puertas_dobles", ()), extras.get("compuertas", ())))
+            mundo, extras.get("puertas_dobles", ()), extras.get("compuertas", ())),
+            dueño=dueño, puede_esperar=len(todos) >= 3 and turno % 2 == 1)
         aliens = [a for a in aliens if campo.ve_a(a.hitbox)]
         npcs = [n for n in npcs if campo.ve_a(n.hitbox)]
 
@@ -290,7 +355,7 @@ def _dibujar_vista(screen, vista, mundo, jugadores, dueño, zonas, mostrar_hitbo
         alien.dibujar_senal(screen, offset)
     if a_oscuras or campo is not None:
         oscuridad.dibujar(screen, vista, camara, dueño, jugadores, a_oscuras,
-                          campo.puntos if campo else None)
+                          campo.puntos if campo else None, campo.origen if campo else None)
     if a_oscuras:
         dibujar_brillo_caja(screen, offset, dueño, eventos, tiempo_ms)
     # Los ojos de la Sombra brillan encima de la oscuridad: a oscuras es lo
@@ -449,85 +514,195 @@ def render_escolta(screen, vista, jugador, escoltado, tapado=None, red=None):
     jugador.hud_abajo = 0           # hasta dónde llega esto (el mensaje va debajo)
     if not lineas:
         return
-    from screens.paneles import fila_vidas
-    corazones, _ = fila_vidas(vista, jugador, tapado)
-    y = corazones.bottom + 2
+    fila = fila_bajo_hud(vista, jugador)
+    x, y = fila.x, fila.y
+    if tapado is not None and tapado.colliderect(pygame.Rect(fila.x, fila.y, 360, 60)):
+        x = tapado.right + 10        # la barra de confianza, si cae a esta altura
     f = fuente_de_tamano(max(13, min(16, vista.width // 50)))
     for texto, color in lineas:
         img = f.render(texto, True, color)
         fondo = pygame.Surface((img.get_width() + 16, img.get_height() + 8), pygame.SRCALPHA)
         fondo.fill((14, 15, 28, 170))
-        screen.blit(fondo, (corazones.x, y))
-        screen.blit(img, (corazones.x + 8, y + 4))
+        screen.blit(fondo, (x, y))
+        screen.blit(img, (x + 8, y + 4))
         y += img.get_height() + 10
     jugador.hud_abajo = y
 
 
 def render_tutorial(screen, vista, jugador, tutorial):
-    """El paso del tutorial de este jugador, abajo del centro de su vista."""
+    """El paso del tutorial de este jugador: una caja angosta abajo al centro,
+    entre el pulso y el inventario (antes iba ancha en medio de la vista).
+    Anota su borde de arriba en `jugador.hud_tutorial` para que la pista de
+    "[E] ..." y la barra de progreso queden encima (paneles.tope_abajo)."""
+    jugador.hud_tutorial = None
     if tutorial is None or not tutorial.activo or not getattr(jugador, "puede_moverse", True):
         return   # los puestos sin mando todavía no se mueven: no hay qué enseñarles
     datos = tutorial.texto(jugador)
     if datos is None:
         return
     paso, total, texto = datos
+    from screens.paneles import rect_pulso, ancho_inventario
+    pulso = rect_pulso(screen, vista, jugador)
     pequena = vista.height < 500
-    f = fuente_de_tamano(15 if pequena else 18)
-    f_chica = fuente_de_tamano(12 if pequena else 14)
-    ancho = min(vista.width - 40, 600)
-    lineas = _envolver(texto, f, ancho - 32)
-    alto = 40 + len(lineas) * f.get_linesize() + f_chica.get_linesize()
+    f = fuente_de_tamano(15 if pequena else 17)
+    f_chica = fuente_de_tamano(12 if pequena else 13)
+    # Lo que queda entre el pulso (izquierda) y el inventario (derecha, si
+    # lleva algo): si es muy poco, va encima del pulso.
+    inventario = ancho_inventario(vista, jugador)
+    libre = vista.right - 12 - (inventario + 12 if inventario else 0) - (pulso.right + 16)
+    ancho = min(520, libre)
+    encima = ancho < 260
+    if encima:
+        ancho = min(520, vista.width - 32)
+    lineas = _envolver(texto, f, ancho - 28)
+    alto = 14 + f_chica.get_linesize() + len(lineas) * f.get_linesize() + 10
     caja = pygame.Rect(0, 0, ancho, alto)
-    if pequena:
-        # Con 3 o 4 jugadores abajo no cabe: ahí van el pulso, la pista y la
-        # barra de progreso. Se pone arriba, debajo del HUD y los mensajes; en
-        # la fila de arriba, además, debajo del cartel de la IA (y=100..152).
-        caja.midtop = (vista.centerx, vista.y + (160 if vista.top == 0 else 108))
+    if encima:
+        caja.midbottom = (vista.centerx, pulso.top - 8)
     else:
-        caja.midtop = (vista.centerx, vista.centery + vista.height // 7)
+        caja.bottomleft = (pulso.right + 16 + max(0, (libre - ancho) // 2), vista.bottom - 12)
     fondo = pygame.Surface(caja.size, pygame.SRCALPHA)
-    fondo.fill((12, 14, 30, 225))
+    fondo.fill((12, 14, 30, 215))
     screen.blit(fondo, caja.topleft)
     pygame.draw.rect(screen, (90, 220, 230), caja, 2, border_radius=6)
     hechos, necesarios = tutorial.listos()
-    titulo = f_chica.render(f"TUTORIAL  {paso}/{total}   ·   los aliens despiertan cuando "
-                            f"todos terminen ({hechos}/{necesarios})", True, (90, 220, 230))
-    if titulo.get_width() > caja.width - 32:
-        titulo = f_chica.render(f"TUTORIAL  {paso}/{total}   ·   listos {hechos}/{necesarios}",
-                                True, (90, 220, 230))
-    screen.blit(titulo, (caja.x + 16, caja.y + 10))
-    y = caja.y + 14 + f_chica.get_linesize()
+    titulo = f_chica.render(f"TUTORIAL  {paso}/{total}   ·   listos {hechos}/{necesarios}",
+                            True, (90, 220, 230))
+    screen.blit(titulo, (caja.x + 14, caja.y + 8))
+    if not tutorial.esta_listo(jugador):
+        ultimo = paso == total
+        pie = f_chica.render(f"[{jugador.nombre_tecla('habilidad')}] "
+                             + ("terminar" if ultimo else "siguiente"), True, (150, 156, 190))
+        screen.blit(pie, (caja.right - pie.get_width() - 12, caja.y + 8))
+    y = caja.y + 10 + f_chica.get_linesize()
     for linea in lineas:
-        screen.blit(f.render(linea, True, (240, 242, 255)), (caja.x + 16, y))
+        screen.blit(f.render(linea, True, (240, 242, 255)), (caja.x + 14, y))
         y += f.get_linesize()
-    if tutorial.esta_listo(jugador):
-        return
-    ultimo = paso == total
-    pie = f_chica.render(f"[{jugador.nombre_tecla('habilidad')}] "
-                         + ("terminar" if ultimo else "siguiente"), True, (150, 156, 190))
-    screen.blit(pie, (caja.right - pie.get_width() - 14, caja.bottom - pie.get_height() - 8))
+    jugador.hud_tutorial = (tuple(vista), caja.top)
 
 
-def render_evento(screen, eventos, bajar=0):
-    """Aviso arriba al centro mientras dura un evento aleatorio."""
+def _fuente_evento(ancho_max):
+    return fuente_de_tamano(max(14, min(18, ancho_max // 30)))
+
+
+def alto_evento(eventos, ancho_max=560):
+    """Lo que ocupa el aviso del evento (0 si no hay): el cartel de la IA va
+    debajo."""
+    if eventos is None or eventos.texto() is None:
+        return 0
+    return _fuente_evento(ancho_max).get_linesize() + 10 + 6
+
+
+def render_evento(screen, eventos, centro_x=None, arriba=6, ancho_max=560):
+    """Aviso de un evento aleatorio mientras dura, en la columna de lo global
+    (celular.columna_avisos): debajo de la barra de confianza."""
     if eventos is None:
         return
     texto = eventos.texto()
     if texto is None:
         return
     color = eventos.color()
-    f = fuente_de_tamano(18)
-    img = f.render(texto, True, color)
-    # Debajo del cartel de la IA (y=100..152): más arriba chocaba con los
-    # mensajes de cada jugador. No coincide con el tutorial (no hay eventos
-    # mientras dura), que con 3 o 4 jugadores usa este mismo lugar.
-    caja = img.get_rect(midtop=(screen.get_width() // 2, 160 + bajar)).inflate(28, 10)
+    f = _fuente_evento(ancho_max)
+    img = f.render(_recortar(f, texto, ancho_max - 28), True, color)
+    if centro_x is None:
+        centro_x = screen.get_width() // 2
+    caja = img.get_rect(midtop=(centro_x, arriba + 5)).inflate(28, 10)
     fondo = pygame.Surface(caja.size, pygame.SRCALPHA)
     fondo.fill((10, 8, 20, 220))
     screen.blit(fondo, caja.topleft)
     if (pygame.time.get_ticks() // 400) % 2:
         pygame.draw.rect(screen, color, caja, 2, border_radius=4)
     screen.blit(img, img.get_rect(center=caja.center))
+
+
+# -- El cuarto cuadro (3 jugadores) ------------------------------------------------------
+
+COLOR_PANEL = (17, 16, 32)
+COLOR_PANEL_BORDE = (60, 58, 96)
+COLOR_PANEL_TENUE = (140, 146, 186)
+
+
+def render_panel_global(screen, panel, jugadores, extras):
+    """Con 3 jugadores, el cuadro que sobra muestra lo que es de todo el
+    equipo, para que no le caiga encima a nadie: el objetivo (siempre, aquí
+    no se esconde), la barra de confianza, el aviso del evento y el cartel de
+    la IA (esos dos los ponen render_evento y el narrador, en la columna que
+    da celular.columna_avisos) y abajo cómo va cada uno."""
+    screen.fill(COLOR_PANEL, panel)
+    pygame.draw.rect(screen, COLOR_PANEL_BORDE, panel.inflate(-16, -16), 1, border_radius=10)
+    grande, chica = _fuentes_panel(panel)
+    x = panel.x + 28
+    ancho = panel.width - 56
+
+    # Objetivo del equipo (es el mismo para todos).
+    y = panel.y + 18
+    screen.blit(chica.render("OBJETIVO DEL EQUIPO", True, COLOR_PANEL_TENUE), (x, y))
+    y += chica.get_linesize()
+    objetivo = next((j.objetivo for j in jugadores if getattr(j, "objetivo", "")), "")
+    renglones = partir_lineas(objetivo, grande, ancho) if objetivo else []
+    if len(renglones) > 2:
+        renglones = [renglones[0], _recortar(grande, " ".join(renglones[1:]), ancho)]
+    for renglon in renglones:
+        screen.blit(grande.render(renglon, True, (240, 242, 252)), (x, y))
+        y += grande.get_linesize()
+
+    # Abajo: una fila por jugador (rol, vidas, sala y si está en problemas).
+    fila = max(grande.get_linesize(), 22) + 8
+    y = panel.bottom - 22 - fila * len(jugadores)
+    tutorial = (extras or {}).get("tutorial")
+    if tutorial is not None and tutorial.activo:
+        hechos, necesarios = tutorial.listos()
+        titulo = _recortar(chica, f"Tutorial: los aliens despiertan cuando todos terminen "
+                                  f"({hechos}/{necesarios})", ancho)
+        screen.blit(chica.render(titulo, True, (90, 220, 230)), (x, y - chica.get_linesize() - 6))
+    else:
+        screen.blit(chica.render("TRIPULACIÓN", True, COLOR_PANEL_TENUE), (x, y - chica.get_linesize() - 6))
+    for numero, jugador in enumerate(jugadores, start=1):
+        _fila_jugador(screen, grande, chica, jugador, numero, pygame.Rect(x, y, ancho, fila))
+        y += fila
+
+
+def _fila_jugador(screen, f, chica, jugador, numero, rect):
+    from data.roles import ROLES_POR_NOMBRE
+    color = ROLES_POR_NOMBRE.get(jugador.rol, {}).get("color", (200, 200, 220))
+    cy = rect.centery
+    pygame.draw.circle(screen, color, (rect.x + 7, cy), 6)
+    x = rect.x + 22
+    img = f.render(f"J{numero}  {jugador.rol}", True, (240, 242, 252))
+    screen.blit(img, (x, cy - img.get_height() // 2))
+    x += max(img.get_width(), f.size("J4  Tecnomante")[0]) + 18
+
+    # Vidas (3 o 4 según la dificultad; en Fácil, un corazón y el ∞). Lo que
+    # sigue se corre según cuántos corazones haya: antes se suponían 3 y con
+    # 4 vidas la sala quedaba encima del último.
+    tam = 16
+    if getattr(jugador, "vidas_infinitas", False):
+        dibujar_corazon(screen, (x + tam // 2, cy), tam, True)
+        dibujar_infinito(screen, (x + tam + 6 + int(tam * 0.75), cy), tam, (255, 230, 235))
+        x += tam + 6 + int(tam * 1.5)
+    elif getattr(jugador, "vidas", None) is not None:
+        maximo = getattr(jugador, "vidas_max", 3)
+        for i in range(maximo):
+            dibujar_corazon(screen, (x + tam // 2 + i * (tam + 5), cy), tam, i < jugador.vidas)
+        x += maximo * (tam + 5)
+    x += 18
+
+    # Estado o sala.
+    if getattr(jugador, "eliminado", False):
+        texto, col = "Eliminado", (236, 64, 82)
+    elif getattr(jugador, "preso", None) is not None:
+        texto, col = "Encerrado: ¡sáquenlo!", (255, 180, 90)
+    elif getattr(jugador, "escondido", False):
+        texto, col = "Escondido", (170, 178, 214)
+    else:
+        texto, col = getattr(jugador, "sala", "") or "", COLOR_SALA
+        if texto:
+            _icono_lugar(screen, (x + 6, cy - 1), f.get_linesize() - 6, col)
+            x += 18
+    texto = _recortar(f, texto, rect.right - x)
+    if texto:
+        img = f.render(texto, True, col)
+        screen.blit(img, (x, cy - img.get_height() // 2))
 
 
 def _dibujar_escondite(screen, escondite, offset, dueño):

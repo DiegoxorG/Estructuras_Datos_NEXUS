@@ -25,7 +25,10 @@ def _a_pantalla(punto, vista, camara):
     return int(punto[0] - camara.x + vista.x), int(punto[1] - camara.y + vista.y)
 
 
-def render_presentacion(screen, juego):
+def render_presentacion(screen, juego, dueños=None):
+    """`dueños`: de quiénes son las vistas de esta pantalla (modo dos
+    pantallas); si el que encontró al alien no está aquí, las vistas de esta
+    pantalla solo muestran el aviso."""
     presentacion = getattr(juego, "presentacion", None)
     if presentacion is None or not presentacion.abierta:
         return
@@ -33,14 +36,16 @@ def render_presentacion(screen, juego):
     jugador, alien, tipo = actual["jugador"], actual["alien"], actual["tipo"]
     if jugador not in juego.jugadores:
         return
-    vistas = calcular_viewports(screen.get_width(), screen.get_height(), len(juego.jugadores))
-    indice = juego.jugadores.index(jugador)
-    if indice >= len(vistas):
-        return
+    dueños = list(juego.jugadores) if dueños is None else list(dueños)
+    vistas = calcular_viewports(screen.get_width(), screen.get_height(), len(dueños))
+    numero = juego.jugadores.index(jugador) + 1
+    indice = dueños.index(jugador) if jugador in dueños else -1
     tiempo = pygame.time.get_ticks()
     for i, otra in enumerate(vistas):
         if i != indice:
-            _aviso_otra_vista(screen, otra, indice + 1, tipo)
+            _aviso_otra_vista(screen, otra, numero, tipo)
+    if not 0 <= indice < len(vistas):
+        return
 
     vista = vistas[indice]
     clip_previo = screen.get_clip()

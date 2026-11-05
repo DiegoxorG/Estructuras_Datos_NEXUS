@@ -238,7 +238,10 @@ def _figura_prisionero(carpeta):
 def _a_alto(img, alto):
     """La imagen agrandada a `alto` px, pixelada (nearest), con caché."""
     import pygame
-    alto = max(8, int(alto))
+    # En los sustos la figura crece cuadro a cuadro: redondeada a 6 px, los
+    # cuadros vecinos reusan la misma imagen en vez de agrandarla de nuevo
+    # (y de llenar la caché con imágenes que no se vuelven a usar).
+    alto = max(8, int(alto) // 6 * 6)
     clave = (id(img), alto)
     if clave not in _escalados:
         if len(_escalados) > 60:
@@ -269,9 +272,7 @@ def _glitch(screen, img, centro, fuerza, semilla):
 def _fondo(screen, vista, color, alfa):
     """Color de fondo + líneas de pantalla (las dos sustos del Cambiaformas)."""
     import pygame
-    capa = pygame.Surface(vista.size, pygame.SRCALPHA)
-    capa.fill((*color, max(0, min(255, int(alfa)))))
-    screen.blit(capa, vista.topleft)
+    _velo(screen, vista, color, alfa)       # (la misma capa guardada)
     if vista.size not in _rayas:
         rayas = pygame.Surface(vista.size, pygame.SRCALPHA)
         for y in range(0, vista.height, 4):
@@ -322,23 +323,49 @@ def _susto_captura(screen, vista, t, puesto):
 
 # -- Un susto por tipo de alien -------------------------------------------------------
 
+_velos = {}
+
+
 def _velo(screen, vista, color, alfa):
     """Toda la vista de un color, con transparencia (sin las líneas de
-    pantalla, que son del Cambiaformas)."""
+    pantalla, que son del Cambiaformas). La capa se guarda por tamaño y
+    color: antes se creaba una del tamaño de la vista en cada llamada (varias
+    por cuadro durante un susto)."""
     import pygame
     alfa = max(0, min(255, int(alfa)))
-    if alfa:
-        capa = pygame.Surface(vista.size)
-        capa.fill(color)
+    if alfa >= 255:
+        # Opaco: un fill. Pegar una capa con set_alpha(255) es un camino
+        # lento de pygame (varias veces más caro que con 254).
+        screen.fill(color, vista)
+    elif alfa:
+        clave = (tuple(vista.size), tuple(color))
+        capa = _velos.get(clave)
+        if capa is None:
+            if len(_velos) > 24:
+                _velos.clear()
+            capa = _velos[clave] = pygame.Surface(vista.size)
+            capa.fill(color)
         capa.set_alpha(alfa)
         screen.blit(capa, vista.topleft)
 
 
+_con_alfas = {}
+
+
 def _con_alfa(img, alfa):
-    """Copia de `img` con transparencia (para estelas y siluetas)."""
-    copia = img.copy()
-    copia.set_alpha(max(0, min(255, int(alfa))))
-    return copia
+    """Copia de `img` con transparencia (para estelas y siluetas). Guardada
+    por imagen y alfa (de a 8): antes era una copia nueva de una figura
+    grande por cuadro y por estela."""
+    alfa = max(0, min(255, int(alfa))) // 8 * 8
+    clave = (id(img), alfa)
+    guardado = _con_alfas.get(clave)
+    if guardado is None or guardado[0] is not img:     # (un id() puede reusarse)
+        if len(_con_alfas) > 48:
+            _con_alfas.clear()
+        copia = img.copy()
+        copia.set_alpha(alfa)
+        guardado = _con_alfas[clave] = (img, copia)
+    return guardado[1]
 
 
 def _oscura(img, factor):

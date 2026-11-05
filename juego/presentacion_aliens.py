@@ -95,8 +95,10 @@ class PresentacionAliens:
         return True
 
     def _vista_de(self, jugador):
-        from screens.partida import calcular_viewports
         juego = self.juego
+        if hasattr(juego, "vista_de"):        # (sabe del modo dos pantallas)
+            return juego.vista_de(jugador)
+        from screens.partida import calcular_viewports
         vistas = calcular_viewports(juego.ancho, juego.alto, len(juego.jugadores))
         indice = juego.jugadores.index(jugador) if jugador in juego.jugadores else -1
         return vistas[indice] if 0 <= indice < len(vistas) else None

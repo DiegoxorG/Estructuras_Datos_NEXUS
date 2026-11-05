@@ -67,22 +67,30 @@ class Narrador:
             self.decir("ambiente")
             self.silencio_ms = 0
 
-    def dibujar(self, screen, bajar=0):
+    def dibujar(self, screen, centro_x=None, arriba=60, ancho_max=None):
+        """El cartel, centrado en `centro_x` desde `arriba` y sin pasarse de
+        `ancho_max`. Lo pone la app en la columna de lo global
+        (celular.columna_avisos): debajo de la barra de confianza y del aviso
+        del evento, o en el cuarto cuadro con 3 jugadores."""
         if not self.hablando:
             return
         from screens.paneles import partir_lineas
         letras = int(self.mostrado_ms / 1000 * LETRAS_POR_SEGUNDO)
         ancho_pantalla = screen.get_width()
-        f = fuente_de_tamano(max(14, min(20, ancho_pantalla // 70)))
-        f_etiqueta = fuente_de_tamano(max(11, min(14, ancho_pantalla // 100)))
+        if centro_x is None:
+            centro_x = ancho_pantalla // 2
+        if ancho_max is None:
+            ancho_max = min(ancho_pantalla - 80, 760)
+        f = fuente_de_tamano(max(14, min(19, ancho_pantalla // 72)))
+        f_etiqueta = fuente_de_tamano(max(11, min(13, ancho_pantalla // 110)))
 
         etiqueta = f_etiqueta.render("IA DE LA NAVE", True, COLOR_IA)
-        lineas = partir_lineas(self.texto, f, min(ancho_pantalla - 80, 760))
+        lineas = partir_lineas(self.texto, f, max(120, ancho_max - 32))
         ancho = max(f.size(l)[0] for l in lineas)
-        ancho = max(ancho, etiqueta.get_width()) + 36
-        alto = etiqueta.get_height() + f.get_linesize() * len(lineas) + 22
+        ancho = max(ancho, etiqueta.get_width()) + 32
+        alto = etiqueta.get_height() + f.get_linesize() * len(lineas) + 20
         caja = pygame.Rect(0, 0, ancho, alto)
-        caja.midtop = (ancho_pantalla // 2, 100 + bajar)   # debajo del HUD y de la barra de confianza
+        caja.midtop = (centro_x, arriba)
 
         # Letra por letra, línea por línea, como una terminal.
         visibles, quedan = [], letras
@@ -100,11 +108,11 @@ class Narrador:
         screen.blit(borde, caja.topleft)
 
         etiqueta.set_alpha(alfa)
-        screen.blit(etiqueta, (caja.x + 18, caja.y + 8))
-        y = caja.y + 12 + etiqueta.get_height()
+        screen.blit(etiqueta, (caja.x + 16, caja.y + 7))
+        y = caja.y + 10 + etiqueta.get_height()
         for linea in visibles:
             if linea:
                 cuerpo = f.render(linea, True, COLOR_TEXTO)
                 cuerpo.set_alpha(alfa)
-                screen.blit(cuerpo, (caja.x + 18, y))
+                screen.blit(cuerpo, (caja.x + 16, y))
             y += f.get_linesize()

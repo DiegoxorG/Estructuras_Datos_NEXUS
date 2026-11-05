@@ -511,8 +511,8 @@ class Alien:
         if n > 1 and hasattr(mundo, "paredes_base"):     # (las pruebas usan mundos de mentira)
             from juego import navegacion
             nav = navegacion.de_mundo(mundo, self.hitbox.width, self.hitbox.height)
-            hay_cierres = bool(getattr(mundo, "bloqueos_alien", None)) or \
-                any(p not in mundo.paredes_base for p in mundo.paredes)
+            from juego.mundo import paredes_extra
+            hay_cierres = bool(getattr(mundo, "bloqueos_alien", None)) or bool(paredes_extra(mundo))
             por_ruta = _distancia(self.centro, self.ruta[self.indice_ruta])   # lo normal, siguiendo su ruta
             for k in range(n):
                 i = (self.indice_ruta + k) % n

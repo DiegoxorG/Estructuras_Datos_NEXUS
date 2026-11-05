@@ -20,6 +20,7 @@ jugador juega en su mitad de la pantalla con sus propias teclas, incluidas las
 de navegar paneles: la partida es local y los dos comparten teclado.
 """
 
+import gc
 import math
 import os
 import sys
@@ -29,6 +30,7 @@ import time
 import pygame
 
 from juego.config import DEFAULT_FPS
+from juego.diagnostico import Diagnostico
 from juego.transition_manager import TransitionManager
 
 from juego.fuentes import construir_fuentes
@@ -80,7 +82,9 @@ from data.comportamiento_alien import ARBOL_ALIEN
 from data.escondites import ANCHO_ENTRADA, ALTO_ENTRADA
 from juego import objetos_mapa
 from screens.menu import render_menu, OPCIONES_MENU
-from screens.partida import render_partida, calcular_viewports, render_terminales_encima
+from screens.partida import (render_partida, calcular_viewports, render_terminales_encima, alto_evento,
+                             pantalla_secundaria)
+from juego import segunda_pantalla
 from screens.seleccion import render_cantidad, render_roles, render_dificultad, render_controles, OPCIONES
 from data.dificultad import DIFICULTADES, POR_DEFECTO as DIFICULTAD_POR_DEFECTO
 from screens.arbol_alien import render_arbol_alien
@@ -158,6 +162,24 @@ def mover_en_mosaico(filas, cursor, dfila, dcol):
     return nueva[min(len(nueva) - 1, int(relativo * len(nueva)))]
 
 
+
+def _ordenar_memoria():
+    """Recoge la basura de una vez y "congela" lo que queda (mapa, sprites,
+    árboles, sonidos...) para que el recolector de Python no lo vuelva a
+    revisar durante la partida.
+
+    El recolector de ciclos, cada tanto, revisa TODOS los objetos vivos (~74
+    mil al empezar una partida). Esa revisión completa frenaba un cuadro
+    entero (~30 ms en la nube, más en una laptop): un tirón cada minuto o
+    dos sin nada en pantalla que lo explicara. Congelados, revisa solo lo
+    nuevo (~1-2 ms). Se descongela primero para que lo de la partida
+    anterior sí se pueda recoger. Se llama al terminar de cargar (todavía en
+    la pantalla de carga, donde una pausa no se nota).
+    """
+    gc.unfreeze()
+    gc.collect()
+    gc.freeze()
+
 class Game:
     def __init__(self):
         pygame.init()
@@ -165,6 +187,12 @@ class Game:
         self.pantalla_completa = True
         self.screen = self._crear_ventana()
         self.ancho, self.alto = self.screen.get_size()
+        # Modo dos pantallas (juego/segunda_pantalla.py): si hay otra pantalla
+        # conectada (Windows en "Extender"), J3 y J4 juegan en ella. F9 lo
+        # apaga y lo prende.
+        self.segunda = None
+        self.dos_pantallas = True
+        self._abrir_segunda()
         self.clock = pygame.time.Clock()
 
         self.fuentes = construir_fuentes()
@@ -190,6 +218,10 @@ class Game:
         # F3: FPS y cuánto tarda cada cuadro (para encontrar tirones).
         self.mostrar_fps = False
         self._tiempos_cuadro = [0.0, 0.0]     # actualizar, dibujar (ms, suavizado)
+        # Con F3 además se perfila cada cuadro y los tirones se anotan en
+        # Guardado/tirones.txt con su causa (juego/diagnostico.py).
+        self.diagnostico = Diagnostico()
+        self.cazar_tirones = False   # el segundo toque de F3
         self.aliens = []
         self.escondites = []
         self.objetos = None   # lo que está puesto en el mapa (objetos_mapa.py)
@@ -262,6 +294,92 @@ class Game:
         if self.pantalla_completa:
             return pygame.display.set_mode(self._tamano_escritorio(), pygame.NOFRAME)
         return pygame.display.set_mode((ANCHO_VENTANA, ALTO_VENTANA))
+
+    # -- Segunda pantalla -------------------------------------------------------
+
+    def _abrir_segunda(self):
+        if self.segunda is not None or not self.dos_pantallas:
+            return
+        if len(segunda_pantalla.pantallas()) < 2:
+            return
+        try:
+            self.segunda = segunda_pantalla.SegundaPantalla(1)
+            print(f"[PANTALLAS] segunda pantalla de {self.segunda.ancho}x{self.segunda.alto}")
+        except Exception as error:         # (pygame sin ventanas extra, etc.)
+            print(f"[PANTALLAS] no se pudo abrir la segunda pantalla: {error}")
+            self.segunda = None
+
+    def _cerrar_segunda(self):
+        if self.segunda is not None:
+            self.segunda.cerrar()
+            self.segunda = None
+
+    def alternar_dos_pantallas(self):
+        """F9: J3 y J4 en la otra pantalla, o todos en esta."""
+        self.dos_pantallas = not self.dos_pantallas
+        if self.dos_pantallas:
+            self._abrir_segunda()
+            if self.segunda is None:
+                self.dos_pantallas = False
+        else:
+            self._cerrar_segunda()
+        print(f"[PANTALLAS] dos pantallas: {'sí' if self.segunda is not None else 'no'}")
+
+    def _reparto_pantallas(self):
+        """(vistas de la pantalla principal, vistas de la segunda). Con 3 o 4
+        jugadores y otra pantalla, J1 y J2 aquí y el resto allá; si no, todos
+        aquí."""
+        if self.segunda is not None and len(self.jugadores) >= 3:
+            return list(self.jugadores[:2]), list(self.jugadores[2:])
+        return list(self.jugadores), []
+
+    def vista_de(self, jugador):
+        """El rect de la vista de `jugador`, en la pantalla donde esté."""
+        principal, segunda = self._reparto_pantallas()
+        if jugador in principal:
+            return calcular_viewports(self.ancho, self.alto, len(principal))[principal.index(jugador)]
+        if jugador in segunda:
+            with pantalla_secundaria():
+                return calcular_viewports(self.segunda.ancho, self.segunda.alto,
+                                          len(segunda))[segunda.index(jugador)]
+        return None
+
+    def _dibujar_partida_en(self, screen, dueños, extras):
+        """Las vistas de `dueños` en `screen`, con su barra, cartel de la IA,
+        terminales NEXUS y la presentación de aliens."""
+        render_partida(screen, self.mundo, self.jugadores, self.zonas,
+                       None if self.tiempo_restante_ms is None else self.tiempo_restante_ms / 1000.0,
+                       self.mostrar_hitboxes,
+                       [a for a in self.aliens if not getattr(a, "oculta", False)],
+                       self.escondites, extras, dueños=dueños)
+        # El cartel de la IA va con lo global: debajo de la barra de
+        # confianza y del aviso del evento (o en el panel del equipo).
+        centro_x, arriba, ancho_max = dibujo_celular.columna_avisos(screen, len(dueños), self.nexus)
+        arriba += alto_evento(self.eventos, ancho_max)
+        self.narrador.dibujar(screen, centro_x, arriba, ancho_max)
+        render_terminales_encima(screen, self.jugadores, dueños)
+        if self.pausa is None and self.presentacion is not None and self.presentacion.abierta:
+            render_presentacion(screen, self, dueños)
+
+    def _dibujar_segunda(self):
+        """La otra pantalla: en partida, las vistas de J3 (y J4); si no (menús,
+        resultados, o jugando de a 2), lo mismo que la principal."""
+        if self.segunda is None:
+            return
+        principal, segunda = self._reparto_pantallas()
+        tela = self.segunda.surface
+        if self.current_screen == "partida" and segunda and self.mundo is not None:
+            with pantalla_secundaria():
+                self._dibujar_partida_en(tela, segunda, self._extras_segunda)
+            if self.pausa is not None:
+                velo = pygame.Surface(tela.get_size(), pygame.SRCALPHA)
+                velo.fill((8, 8, 16, 170))
+                tela.blit(velo, (0, 0))
+                texto = self.font.render("PAUSA", True, (240, 242, 252))
+                tela.blit(texto, texto.get_rect(center=tela.get_rect().center))
+            self.transitions.draw(tela)
+        else:
+            self.segunda.espejo(self.screen)
 
     def _aplicar_tamano(self):
         self.ancho, self.alto = self.screen.get_size()
@@ -581,6 +699,7 @@ class Game:
             else:
                 self.decir("inicio", forzar=True)
         self._avisar_zonas_inalcanzables()
+        _ordenar_memoria()
 
     def _crear_aliens(self):
         """Un alien por ruta del mapa (las que se trazan en el editor de mapa).
@@ -1528,6 +1647,9 @@ class Game:
     def run(self):
         while self.running:
             dt = self.clock.tick(DEFAULT_FPS)
+            if self.mostrar_fps and self.cazar_tirones:
+                self.diagnostico.empezar()
+            t_eventos = time.perf_counter()
             self._manejar_eventos()
             self._sonido_de_fondo()
             t0 = time.perf_counter()
@@ -1540,23 +1662,32 @@ class Game:
             self.transitions.update(self, dt)
             t1 = time.perf_counter()
             self._dibujar()
+            t2 = time.perf_counter()
             if self.mostrar_fps:
-                self._medir_cuadro(dt, (t1 - t0) * 1000, (time.perf_counter() - t1) * 1000)
+                self._medir_cuadro(dt, (t1 - t0) * 1000, (t2 - t1) * 1000)
             pygame.display.flip()
+            if self.segunda is not None:
+                self.segunda.mostrar()
+            # (sin F3 no hay perfil y esto no hace nada)
+            self.diagnostico.terminar(self, {"eventos": (t0 - t_eventos) * 1000,
+                                             "actualizar": (t1 - t0) * 1000,
+                                             "dibujar": (t2 - t1) * 1000,
+                                             "flip": (time.perf_counter() - t2) * 1000})
         pygame.quit()
         sys.exit()
 
     def _medir_cuadro(self, dt, ms_actualizar, ms_dibujar):
         """F3: FPS y milisegundos de actualizar/dibujar arriba a la derecha.
-        Un cuadro de más de 40 ms (un tirón) se escribe en la consola."""
+        Los tirones (cuadros de más de 40 ms) los anota juego/diagnostico.py
+        en la consola y en Guardado/tirones.txt, con lo que los causó."""
         suave = self._tiempos_cuadro
         suave[0] += (ms_actualizar - suave[0]) * 0.1
         suave[1] += (ms_dibujar - suave[1]) * 0.1
-        if ms_actualizar + ms_dibujar > 40:
-            print(f"[FPS] cuadro lento: actualizar {ms_actualizar:.0f} ms, dibujar {ms_dibujar:.0f} ms "
-                  f"({self.current_screen})")
         texto = (f"{self.clock.get_fps():.0f} FPS  ·  actualizar {suave[0]:.1f} ms  ·  "
                  f"dibujar {suave[1]:.1f} ms")
+        if self.cazar_tirones:
+            texto += (f"  ·  tirones: {self.diagnostico.tirones}  ·  cuadro típico "
+                      f"{self.diagnostico.tipico:.0f} ms (perfilando)")
         imagen = self.small_font.render(texto, True, (240, 240, 240))
         fondo = pygame.Rect(0, 0, imagen.get_width() + 12, imagen.get_height() + 6)
         fondo.topright = (self.ancho - 6, 6)
@@ -1579,6 +1710,14 @@ class Game:
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
                 self.running = False
+            elif self.segunda is not None and evento.type == getattr(pygame, "WINDOWCLOSE", -1):
+                # Con dos ventanas, cerrar la principal (Alt+F4) ya no manda
+                # QUIT (queda la otra abierta): se sale igual.
+                if not self.segunda.es_suyo(evento):
+                    self.running = False
+            elif (self.segunda is not None and self.segunda.es_suyo(evento)
+                  and evento.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION)):
+                continue        # el mouse en la otra pantalla no cuenta
             elif self.carga is not None:
                 continue        # cargando: no se toca nada mientras el otro hilo arma la partida
             elif evento.type == pygame.KEYDOWN:
@@ -1672,8 +1811,19 @@ class Game:
         if key == pygame.K_F11:
             self.alternar_pantalla_completa()
             return
+        if key == pygame.K_F9:
+            self.alternar_dos_pantallas()
+            return
         if key == pygame.K_F3:
-            self.mostrar_fps = not self.mostrar_fps
+            # Tres pasos: FPS solo (lo que de verdad va el juego) -> FPS y
+            # cazador de tirones (perfila cada cuadro: todo va un poco más
+            # lento) -> apagado.
+            if not self.mostrar_fps:
+                self.mostrar_fps, self.cazar_tirones = True, False
+            elif not self.cazar_tirones:
+                self.cazar_tirones = True
+            else:
+                self.mostrar_fps = self.cazar_tirones = False
             return
         if self.transitions.active:
             return
@@ -1919,14 +2069,10 @@ class Game:
             viewports = calcular_viewports(self.ancho, self.alto, self.cantidad_jugadores)
             render_roles(self.screen, viewports, self.seleccion_roles)
         elif self.current_screen == "partida":
-            render_partida(self.screen, self.mundo, self.jugadores, self.zonas,
-                           None if self.tiempo_restante_ms is None else self.tiempo_restante_ms / 1000.0,
-                           self.mostrar_hitboxes,
-                           [a for a in self.aliens if not getattr(a, "oculta", False)],
-                           self.escondites, self._extras_dibujo())
-            self.narrador.dibujar(self.screen, dibujo_celular.desplazamiento_avisos(
-                self.screen, len(self.jugadores), self.nexus))
-            render_terminales_encima(self.screen, self.jugadores)
+            principal, _ = self._reparto_pantallas()
+            extras = self._extras_dibujo()
+            self._extras_segunda = extras         # (la otra pantalla usa los mismos)
+            self._dibujar_partida_en(self.screen, principal, extras)
             if self.mostrar_arbol_alien and self.aliens:
                 # (la Sombra entra y sale de la lista: que el índice no se pase)
                 self.alien_en_vista = min(self.alien_en_vista, len(self.aliens) - 1)
@@ -1939,10 +2085,8 @@ class Game:
                 render_grafo_nave(self.screen, self.mundo, self.aliens,
                                   self.npcs.npcs if self.npcs is not None else (), self.jugadores)
             if self.pausa is None:
-                if self.presentacion is not None and self.presentacion.abierta:
-                    render_presentacion(self.screen, self)    # (el aviso de logro espera)
-                else:
-                    render_aviso_logro(self.screen, self.logros)
+                if self.presentacion is None or not self.presentacion.abierta:
+                    render_aviso_logro(self.screen, self.logros)   # (con la presentación, espera)
             else:
                 render_pausa(self.screen, self.pausa)
         elif self.current_screen == "resultados":
@@ -1964,6 +2108,7 @@ class Game:
             self.credit_scroll = render_creditos(self.screen, self.small_font, self.credit_scroll)
 
         self.transitions.draw(self.screen)
+        self._dibujar_segunda()
 
 
 if __name__ == "__main__":

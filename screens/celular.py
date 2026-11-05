@@ -4,7 +4,7 @@
   Se ve como una red social cualquiera (publicaciones, compartir, reportar);
   el grafo de nexus.py no se dibuja.
 - render_confianza: la barra de confianza de la tripulación, UNA para todo el
-  equipo, arriba al centro: verde (confían en ustedes) desde la izquierda,
+  equipo, arriba al centro (con 3 jugadores, en el cuarto cuadro): verde (confían en ustedes) desde la izquierda,
   roja (en los aliens) desde la derecha y gris en medio; cada parte mide su %.
   La raya blanca marca cuánto verde hace falta para los planos.
 - render_aviso_celular: en el HUD de cada uno, su tecla del celular y lo nuevo.
@@ -80,42 +80,90 @@ def _fuente_barra(ancho):
     return fuente_de_tamano(max(12, min(18, ancho // 105)))
 
 
-def rect_confianza(screen, cantidad):
-    """Dónde va la barra general: arriba al centro, justo debajo del HUD."""
-    from screens.partida import calcular_viewports
-    from screens.paneles import _fuente_para
+def _estado_confianza(red):
+    """El renglón de abajo de la barra: qué significa ahora y de qué color."""
+    verde, rojo = red.barras()
+    if red.planos:
+        return "Confianza de la tripulación  ·  ¡planos listos!", COLOR_VERDE
+    if rojo > verde:
+        return "Los aliens van ganando: están más rápidos y ven más", (245, 150, 140)
+    umbral = int(getattr(red, "umbral_planos", UMBRAL_PLANOS) * 100)
+    return f"Confianza de la tripulación  ·  planos al {umbral}%", (190, 196, 230)
+
+
+def _con_renglon(red):
+    """En la barra chica (2 y 4 jugadores) el renglón de abajo solo sale
+    cuando dice algo que hay que saber: planos listos o aliens ganando."""
+    if red is None:
+        return False
+    verde, rojo = red.barras()
+    return bool(red.planos) or rojo > verde
+
+
+def rect_confianza(screen, cantidad, red=None):
+    """Dónde va la barra general. Con 3 jugadores, en el cuarto cuadro (el
+    panel del equipo, partida.render_panel_global); si no, chica, pegada
+    arriba al centro, encima del corte entre las vistas: lo de cada vista que
+    caería debajo se corre (paneles._hueco_fila)."""
     ancho, alto = screen.get_size()
-    vista = calcular_viewports(ancho, alto, max(1, cantidad))[0]
-    f = _fuente_para(vista)
-    abajo_hud = vista.y + f.get_linesize() * 3 + 14
-    f_barra = _fuente_barra(ancho)
-    caja = pygame.Rect(0, 0, int(min(620, max(300, ancho * 0.36))), f_barra.get_linesize() * 2 + 18)
-    caja.midtop = (ancho // 2, abajo_hud + 4)
+    from screens.partida import tiene_panel
+    if tiene_panel(cantidad):
+        from screens.partida import rect_panel_global, arriba_confianza_panel
+        panel = rect_panel_global(ancho, alto, cantidad)
+        f = _fuente_barra(int(panel.width * 2))
+        caja = pygame.Rect(0, 0, min(panel.width - 48, 680), f.get_linesize() * 2 + 18)
+        caja.midtop = (panel.centerx, panel.y + arriba_confianza_panel(panel))
+        return caja
+    f = _fuente_barra(ancho)
+    alto_caja = f.get_linesize() + 12 + (f.get_linesize() + 2 if _con_renglon(red) else 0)
+    caja = pygame.Rect(0, 0, int(min(440, max(250, ancho * 0.23))), alto_caja)
+    caja.midtop = (ancho // 2, 2)
     return caja
 
 
-def desplazamiento_avisos(screen, cantidad, red):
-    """Cuánto bajar el cartel de la IA y el del evento para no tapar la barra."""
-    if red is None:
-        return 0
-    return max(0, rect_confianza(screen, cantidad).bottom + 8 - 100)
+def columna_avisos(screen, cantidad, red):
+    """Dónde se apilan el aviso del evento y el cartel de la IA: debajo de la
+    barra de confianza. Devuelve (centro x, y de arriba, ancho máximo)."""
+    ancho, alto = screen.get_size()
+    from screens.partida import tiene_panel
+    if tiene_panel(cantidad):
+        from screens.partida import rect_panel_global, arriba_confianza_panel
+        panel = rect_panel_global(ancho, alto, cantidad)
+        arriba = (rect_confianza(screen, cantidad, red).bottom if red is not None
+                  else panel.y + arriba_confianza_panel(panel)) + 14
+        return panel.centerx, arriba, panel.width - 40
+    # Debajo de la barra y también de la franja de arriba de las vistas
+    # cuando muestra el objetivo (dos líneas): si no, el cartel de la IA le
+    # tapaba el final del objetivo a la vista de la derecha.
+    from screens.partida import calcular_viewports
+    from screens.paneles import _fuente_para
+    vista = calcular_viewports(ancho, alto, max(1, cantidad))[0]
+    arriba = vista.y + _fuente_para(vista).get_linesize() * 2 + 16
+    if red is not None:
+        arriba = max(arriba, rect_confianza(screen, cantidad, red).bottom + 6)
+    return ancho // 2, arriba, int(min(580, max(320, ancho * 0.32)))
 
 
 def render_confianza(screen, red, cantidad):
-    """La confianza de la tripulación, una para todo el equipo, arriba al centro."""
+    """La confianza de la tripulación, una para todo el equipo."""
     if red is None:
         return
     verde, rojo = red.barras()
-    caja = rect_confianza(screen, cantidad)
+    caja = rect_confianza(screen, cantidad, red)
     fondo = pygame.Surface(caja.size, pygame.SRCALPHA)
     fondo.fill((14, 15, 28, 225))
     screen.blit(fondo, caja.topleft)
     pygame.draw.rect(screen, (90, 100, 150), caja, 1, border_radius=8)
 
-    f = _fuente_barra(screen.get_width())
+    from screens.partida import tiene_panel
+    if tiene_panel(cantidad):
+        from screens.partida import rect_panel_global
+        f = _fuente_barra(int(rect_panel_global(*screen.get_size(), cantidad).width * 2))
+    else:
+        f = _fuente_barra(screen.get_width())
     izq = f.render(f"Ustedes {int(verde * 100)}%", True, COLOR_VERDE)
     der = f.render(f"{int(rojo * 100)}% Aliens", True, COLOR_ROJO)
-    alto_barra = max(12, f.get_height() - 4)
+    alto_barra = max(10, f.get_height() - 5)
     barra = pygame.Rect(caja.x + izq.get_width() + 18,
                         caja.y + 6 + (f.get_linesize() - alto_barra) // 2,
                         caja.width - izq.get_width() - der.get_width() - 36, alto_barra)
@@ -123,41 +171,43 @@ def render_confianza(screen, red, cantidad):
     screen.blit(der, (caja.right - der.get_width() - 10, barra.centery - der.get_height() // 2))
     _barra_ponderada(screen, barra, verde, rojo, getattr(red, "umbral_planos", UMBRAL_PLANOS))
 
-    if red.planos:
-        texto, color = "Confianza de la tripulación  ·  ¡planos listos!", COLOR_VERDE
-    elif rojo > verde:
-        texto, color = "Los aliens van ganando: están más rápidos y ven más", (245, 150, 140)
-    else:
-        texto, color = f"Confianza de la tripulación  ·  planos al {int(getattr(red, 'umbral_planos', UMBRAL_PLANOS) * 100)}%", \
-            (190, 196, 230)
-    img = f.render(texto, True, color)
-    screen.blit(img, img.get_rect(midbottom=(caja.centerx, caja.bottom - 5)))
+    if tiene_panel(cantidad) or _con_renglon(red):
+        texto, color = _estado_confianza(red)
+        from screens.paneles import _recortar
+        img = f.render(_recortar(f, texto, caja.width - 16), True, color)
+        screen.blit(img, img.get_rect(midbottom=(caja.centerx, caja.bottom - 4)))
 
 
 def render_aviso_celular(screen, vista, jugador, red):
-    """En el HUD de cada uno: su tecla del celular y cuántas cosas nuevas tiene."""
+    """En la franja de arriba de cada uno: cuántas cosas nuevas o por
+    verificar tiene en NEXUS, con su tecla. Si no hay nada, no sale (la
+    tecla la enseña el tutorial)."""
     if red is None or jugador not in red.vistas:
         return
-    from screens.paneles import _fuente_para
-    f_hud = _fuente_para(vista)
-    izq = vista.x + 12 + f_hud.size(f"{jugador.rol}  ·  {jugador.controles_nombre}")[0] + 16
-    der = vista.right - 12 - f_hud.size(f"{jugador.puntos} pts")[0] - 16
-    f = fuente_de_tamano(max(11, min(15, vista.width // 60)))
     from redes import celular as logica
     por_hacer, nuevos = logica.avisos(red, jugador)
+    if not por_hacer and not nuevos:
+        return
+    from screens.paneles import _fuente_para, fila_bajo_hud, _con_sombra
+    f = fuente_de_tamano(max(11, min(16, vista.width // 58)))
     tecla = jugador.nombre_tecla('celular')
     partes = [f"NEXUS [{tecla}]"]
     if por_hacer:
         partes.append(f"{por_hacer} por verificar")
     if nuevos:
         partes.append(f"{nuevos} nuevo{'s' if nuevos > 1 else ''}")
-    color = (255, 214, 64) if nuevos else ((255, 180, 90) if por_hacer else (170, 178, 214))
-    img = f.render("  ·  ".join(partes), True, color)
-    if img.get_width() > der - izq:
-        corto = f"[{tecla}]" + (f" {por_hacer}!" if por_hacer else "") + (f" +{nuevos}" if nuevos else "")
-        img = f.render(corto, True, color)
-    x = izq + max(0, (der - izq - img.get_width()) // 2)
-    screen.blit(img, (x, vista.y + 7))
+    color = (255, 214, 64) if nuevos else (255, 180, 90)
+    texto = "  ·  ".join(partes)
+    izq, der = getattr(jugador, "hud_hueco", (vista.x + 12, vista.right - 12))
+    if f.size(texto)[0] > der - izq:
+        texto = f"NEXUS [{tecla}]" + (f" {por_hacer}!" if por_hacer else "") + (f" +{nuevos}" if nuevos else "")
+    y = vista.y + 5 + (_fuente_para(vista).get_linesize() - f.get_linesize()) // 2
+    if f.size(texto)[0] > der - izq:
+        # Ni corto cabe en la franja: va debajo, a la izquierda.
+        fila = fila_bajo_hud(vista, jugador)
+        izq, der, y = fila.x + 4, fila.right, fila.y + 4
+    x = izq + max(0, (der - izq - f.size(texto)[0]) // 2)
+    _con_sombra(screen, f, texto, color, (x, y))
 
 
 # -- El lugar que investiga ------------------------------------------------------------------
@@ -186,10 +236,15 @@ def dibujar_lugar(screen, vista, camara, dueño, red, tiempo_ms):
 
 # -- El celular --------------------------------------------------------------------------------
 
-def _marco(vista, tapado=None):
-    """Rect del teléfono y de su pantalla, a la derecha del viewport. Si la
-    barra de confianza cae encima (`tapado`), el teléfono arranca debajo."""
-    arriba = vista.y + min(90, vista.height // 6)
+def _marco(vista, tapado=None, jugador=None):
+    """Rect del teléfono y de su pantalla, a la derecha del viewport, debajo
+    de la franja de arriba. Si la barra de confianza cae encima (`tapado`),
+    el teléfono arranca debajo."""
+    if jugador is not None:
+        from screens.paneles import alto_hud
+        arriba = alto_hud(vista, jugador) + 8
+    else:
+        arriba = vista.y + min(60, vista.height // 8)
     ancho_previo = int(min(380, max(240, vista.width * 0.46)))
     if tapado is not None and tapado.colliderect(
             pygame.Rect(vista.right - ancho_previo - 14, arriba, ancho_previo, vista.bottom - arriba)):
@@ -218,7 +273,7 @@ def render_celular(screen, vista, jugador, red, tapado=None):
     panel = jugador.panel
     if panel is None or red is None or jugador not in red.vistas:
         return
-    telefono, pantalla = _marco(vista, tapado)
+    telefono, pantalla = _marco(vista, tapado, jugador)
     pygame.draw.rect(screen, COLOR_SOMBRA, telefono.move(5, 5), border_radius=22)
     pygame.draw.rect(screen, COLOR_CARCASA, telefono, border_radius=22)
     pygame.draw.rect(screen, (70, 72, 92), telefono, 2, border_radius=22)

@@ -56,9 +56,11 @@ def _fuente_para(vista):
     """Tamaño de letra proporcional al viewport.
 
     Con dos jugadores cada mitad es ancha; con cuatro, cada cuarto es chico y
-    el mismo texto no cabe. Se escoge según el ancho disponible.
+    el mismo texto no cabe. Se escoge según el ancho y el alto disponibles: a
+    1366x768 con cuatro jugadores cada vista mide 683x384 y con la letra de
+    antes (18) la franja de arriba y los recuadros se comían la vista.
     """
-    px = max(12, min(20, vista.width // 36))
+    px = max(13, min(20, vista.width // 36, vista.height // 26))
     return fuente_de_tamano(px)
 
 
@@ -480,50 +482,136 @@ def _icono_lugar(screen, centro, tam, color):
     pygame.draw.circle(screen, (14, 15, 28), (cx, cy - r // 2), max(1, r // 2))
 
 
-def render_hud(screen, vista, jugador, segundos_restantes=None):
-    """Barra superior del viewport: rol, puntos, objetivo y la sala donde está
-    (o el reloj, en un mapa sin misión, que todavía se juega por tiempo)."""
+# -- Franja de arriba de cada vista ----------------------------------------------------
+#
+# Antes eran tres líneas sobre una franja sólida (rol · controles, objetivo y
+# la habilidad) y debajo otra fila con los corazones: con 3 o 4 jugadores se
+# comía la quinta parte de cada vista. Ahora es UNA línea sobre un degradado
+# (rol · habilidad a la izquierda, sala y puntos a la derecha); el objetivo
+# sale debajo solo un rato cada vez que cambia, las vidas se fueron abajo con
+# el pulso y los controles ya los dice el tutorial.
+
+OBJETIVO_VISIBLE_MS = 7000      # cuánto se ve el objetivo cada vez que cambia
+COLOR_OBJETIVO = (214, 220, 248)
+COLOR_SOMBRA_TEXTO = (6, 6, 14)
+_cache_degradado = {}
+
+
+def objetivo_visible(jugador):
+    """¿Va la línea del objetivo? Sale cada vez que cambia (al empezar, al
+    pasar de fase, con cada consola apagada...) y se esconde a los
+    OBJETIVO_VISIBLE_MS: la flecha y la pista de abajo ya dicen qué hacer."""
+    objetivo = getattr(jugador, "objetivo", "") or ""
+    ahora = pygame.time.get_ticks()
+    if getattr(jugador, "_hud_objetivo", None) != objetivo:
+        jugador._hud_objetivo = objetivo
+        jugador._hud_objetivo_ms = ahora
+    return bool(objetivo) and ahora - jugador._hud_objetivo_ms < OBJETIVO_VISIBLE_MS
+
+
+def alto_hud(vista, jugador=None):
+    """La y de pantalla donde termina la franja de arriba de la vista (una
+    línea, dos mientras se ve el objetivo). Lo que va "debajo del HUD"
+    (mensajes, "Te sigue", el celular, el minimapa) se mide desde aquí."""
     f = _fuente_para(vista)
-    lineas = 3 if jugador.info else 2
-    alto_barra = f.get_linesize() * lineas + 14
+    lineas = 2 if jugador is not None and objetivo_visible(jugador) else 1
+    return vista.y + f.get_linesize() * lineas + 10
 
-    barra = pygame.Surface((vista.width, alto_barra), pygame.SRCALPHA)
-    barra.fill((14, 15, 28, 205))
-    screen.blit(barra, vista.topleft)
 
-    x = vista.x + 12
-    y = vista.y + 6
-    titulo = f"{jugador.rol}  ·  {jugador.controles_nombre}"
-    screen.blit(f.render(titulo, True, COLOR_TEXTO), (x, y))
+def _degradado(ancho, alto):
+    """Fondo de la franja: oscuro arriba y transparente hacia abajo, así no
+    queda una banda sólida tapando el mapa."""
+    clave = (ancho, alto)
+    if clave not in _cache_degradado:
+        if len(_cache_degradado) > 24:
+            _cache_degradado.clear()
+        capa = pygame.Surface((max(1, ancho), max(1, alto)), pygame.SRCALPHA)
+        solido = alto * 0.5
+        for y in range(alto):
+            a = 185 if y < solido else int(185 * (1 - (y - solido) / max(1, alto - solido)) ** 1.5)
+            pygame.draw.line(capa, (12, 13, 26, a), (0, y), (ancho, y))
+        _cache_degradado[clave] = capa
+    return _cache_degradado[clave]
 
-    puntos = f.render(f"{jugador.puntos} pts", True, COLOR_TITULO)
-    screen.blit(puntos, (vista.right - puntos.get_width() - 12, y))
 
-    y += f.get_linesize()
-    derecha, icono = None, False
+def _con_sombra(screen, f, texto, color, pos, alfa=None):
+    """Texto con una sombrita de 1 px: sin franja sólida detrás, así se lee
+    encima del piso claro de la nave. Devuelve el ancho."""
+    sombra = f.render(texto, True, COLOR_SOMBRA_TEXTO)
+    img = f.render(texto, True, color)
+    if alfa is not None:
+        sombra.set_alpha(alfa)
+        img.set_alpha(alfa)
+    screen.blit(sombra, (pos[0] + 1, pos[1] + 1))
+    screen.blit(img, pos)
+    return img.get_width()
+
+
+def _recortar(f, texto, ancho):
+    """`texto` cortado con "..." para que quepa en `ancho` ("" si ni eso)."""
+    if f.size(texto)[0] <= ancho:
+        return texto
+    while texto and f.size(texto + "...")[0] > ancho:
+        texto = texto[:-1]
+    return (texto.rstrip() + "...") if texto else ""
+
+
+def _hueco_fila(vista, y, alto, tapado):
+    """(izquierda, derecha) libres de una fila de la vista, sin lo que tapa
+    la barra de confianza (que va arriba al centro, sobre el corte)."""
+    izq, der = vista.x + 12, vista.right - 12
+    if tapado is not None and tapado.colliderect(pygame.Rect(vista.x, y, vista.width, alto)):
+        if tapado.centerx < vista.centerx:
+            izq = max(izq, tapado.right + 12)
+        else:
+            der = min(der, tapado.left - 12)
+    return izq, der
+
+
+def render_hud(screen, vista, jugador, segundos_restantes=None, tapado=None):
+    """La franja de arriba: rol y su habilidad, la sala (o el reloj) y los
+    puntos; y un rato el objetivo, cuando cambia."""
+    f = _fuente_para(vista)
+    paso = f.get_linesize()
+    ver_objetivo = objetivo_visible(jugador)
+    abajo = alto_hud(vista, jugador)
+    screen.blit(_degradado(vista.width, abajo - vista.y + 18), vista.topleft)
+
+    y = vista.y + 5
+    izq, der = _hueco_fila(vista, y, paso, tapado)
+
+    # Derecha: puntos y, a su izquierda, la sala donde está (o el reloj).
+    x = der - f.size(f"{jugador.puntos} pts")[0]
+    _con_sombra(screen, f, f"{jugador.puntos} pts", COLOR_TITULO, (x, y))
     if segundos_restantes is not None:
-        derecha = f.render(_formato_reloj(segundos_restantes), True, COLOR_TEXTO)
+        reloj = _formato_reloj(segundos_restantes)
+        x -= f.size(reloj)[0] + 20
+        _con_sombra(screen, f, reloj, COLOR_TEXTO, (x, y))
     elif getattr(jugador, "sala", None):
         nueva = getattr(jugador, "sala_cambio_ms", 0) > 0
-        derecha = f.render(jugador.sala, True, COLOR_TITULO if nueva else COLOR_SALA)
-        icono = True
-    reservado = (derecha.get_width() + (22 if icono else 0) + 24) if derecha else 12
-    partes = partir_lineas(jugador.objetivo, f, max(60, vista.width - reservado - 12))
-    objetivo = partes[0] + ("..." if len(partes) > 1 else "")
-    screen.blit(f.render(objetivo, True, COLOR_TENUE), (x, y))
+        color = COLOR_TITULO if nueva else COLOR_SALA
+        x -= f.size(jugador.sala)[0] + 20
+        _con_sombra(screen, f, jugador.sala, color, (x, y))
+        _icono_lugar(screen, (x - 11, y + paso // 2 - 1), paso - 4, color)
+        x -= 22
+    limite = x - 16
 
-    if derecha is not None:
-        dx = vista.right - derecha.get_width() - 12
-        screen.blit(derecha, (dx, y))
-        if icono:
-            _icono_lugar(screen, (dx - 11, y + f.get_linesize() // 2 - 1), f.get_linesize() - 4,
-                         COLOR_TITULO if getattr(jugador, "sala_cambio_ms", 0) > 0 else COLOR_SALA)
-
-    # Línea propia del rol: la recarga de su habilidad y cosas así
-    # (acciones_rol.linea_de_estado).
+    # Izquierda: el rol y el estado de su habilidad (recarga, lista, escoger).
+    xi = izq + _con_sombra(screen, f, jugador.rol or "", COLOR_TEXTO, (izq, y))
     if jugador.info:
-        y += f.get_linesize()
-        screen.blit(f.render(jugador.info, True, COLOR_INFO), (x, y))
+        texto = _recortar(f, "  ·  " + jugador.info, limite - xi)
+        if texto:
+            xi += _con_sombra(screen, f, texto, COLOR_INFO, (xi, y))
+    # Lo que queda libre en el medio (ahí va el aviso de NEXUS).
+    jugador.hud_hueco = (xi + 18, limite)
+
+    if ver_objetivo:
+        y += paso
+        izq2, der2 = _hueco_fila(vista, y, paso, tapado)
+        texto = _recortar(f, jugador.objetivo, der2 - izq2)
+        resta = OBJETIVO_VISIBLE_MS - (pygame.time.get_ticks() - jugador._hud_objetivo_ms)
+        alfa = 255 if resta > 600 else max(0, int(255 * resta / 600))
+        _con_sombra(screen, f, texto, COLOR_OBJETIVO, (izq2, y), alfa)
 
 
 def _formato_reloj(segundos):
@@ -531,26 +619,11 @@ def _formato_reloj(segundos):
     return f"{segundos // 60}:{segundos % 60:02d}"
 
 
-def fila_vidas(vista, jugador, tapado=None):
-    """La fila de debajo del HUD que comparten los corazones, el mensaje y el
-    "Te sigue". Devuelve (rect de los corazones, tamaño de cada corazón).
-
-    `tapado` es lo que ya ocupa esa altura en la pantalla (la barra de
-    confianza, arriba al centro): si los corazones caerían debajo, se corren a
-    la derecha de ella (pasa en la vista de la derecha cuando juegan 2 o 3)."""
-    from entidades.jugador import VIDAS_INICIALES
+def fila_bajo_hud(vista, jugador):
+    """La fila justo debajo de la franja de arriba: ahí van "Te sigue...",
+    "Verificando..." (partida.render_escolta) y los mensajes."""
     f = _fuente_para(vista)
-    lineas = 3 if jugador.info else 2
-    tam = max(16, min(26, vista.width // 34))
-    if getattr(jugador, "vidas_infinitas", False):
-        ancho = tam + 6 + ancho_infinito(tam) + 10      # un corazón y el ∞
-    else:
-        ancho = getattr(jugador, "vidas_max", VIDAS_INICIALES) * (tam + 6) + 10
-    rect = pygame.Rect(vista.x + 8, vista.y + f.get_linesize() * lineas + 14,
-                       ancho, tam + 12)
-    if tapado is not None and rect.colliderect(tapado):
-        rect.left = tapado.right + 10
-    return rect, tam
+    return pygame.Rect(vista.x + 8, alto_hud(vista, jugador) + 2, vista.width - 16, f.get_height() + 8)
 
 
 def _tramos_libres(desde, hasta, ocupados):
@@ -571,52 +644,42 @@ def _tramos_libres(desde, hasta, ocupados):
 
 
 def render_mensaje(screen, vista, jugador, tapado=None):
-    """Mensajito flotante de feedback, debajo del HUD."""
+    """Mensajito flotante de feedback, debajo de la franja de arriba (y de lo
+    que dice render_escolta, si hay algo)."""
     if not jugador.mensaje:
         return
     f = _fuente_para(vista)
-    lineas = 3 if jugador.info else 2
-    y = vista.y + f.get_linesize() * lineas + 20
-    # Esa fila la comparte con los corazones (render_vidas) y, en las vistas
-    # de arriba, con la barra de confianza. El mensaje va centrado en el
-    # pedazo libre más ancho, achicando un poco la letra si hace falta.
+    fila = fila_bajo_hud(vista, jugador)
+    if getattr(jugador, "hud_abajo", 0):
+        fila.y = jugador.hud_abajo + 4
+    # Ni debajo de la barra de confianza ni del cartel de la IA, que va
+    # justo debajo de ella (más ancho), ni detrás del celular.
     ocupados = []
-    corazones = None
-    if getattr(jugador, "vidas", None) is not None:
-        corazones, _ = fila_vidas(vista, jugador, tapado)
-        ocupados.append((corazones.left - 8, corazones.right + 8))
-    fila = pygame.Rect(vista.x + 8, y - 4, vista.width - 16, f.get_height() + 8)
-    if tapado is not None and fila.colliderect(tapado):
-        ocupados.append((tapado.left - 8, tapado.right + 8))
+    if tapado is not None:
+        # La columna de lo global (barra, aviso del evento y cartel de la IA,
+        # celular.columna_avisos), que es más ancha que la barra.
+        mitad = int(min(580, max(320, tapado.centerx * 2 * 0.32))) // 2
+        ocupados.append((min(tapado.left, tapado.centerx - mitad) - 10,
+                         max(tapado.right, tapado.centerx + mitad) + 10))
+    if jugador.panel is not None and jugador.panel.get("tipo") == "celular":
+        from screens.celular import _marco                       # ni detrás del celular
+        telefono, _ = _marco(vista, tapado, jugador)
+        ocupados.append((telefono.left - 12, telefono.right + 12))
     t0, t1 = max(_tramos_libres(fila.left, fila.right, ocupados),
-                 key=lambda t: t[1] - t[0], default=(fila.left, fila.left))
+                 key=lambda t: t[1] - t[0], default=(fila.left, fila.right))
     disponible = t1 - t0 - 20
     minimo = max(12, f.get_height() - 4)
     for px in range(f.get_height(), minimo - 1, -1):
         etiqueta = fuente_de_tamano(px).render(jugador.mensaje, True, jugador.mensaje_color)
         if etiqueta.get_width() <= disponible:
-            caja = etiqueta.get_rect(centerx=(t0 + t1) // 2, centery=y + f.get_height() // 2)
+            caja = etiqueta.get_rect(centerx=(t0 + t1) // 2, top=fila.y + 4)
             _caja_mensaje(screen, [etiqueta], caja)
             return
-    # No cabe en esa fila: va debajo de los corazones, partido en renglones,
-    # y sin meterse debajo de la barra ni del cartel de la IA (que va justo
-    # debajo de la barra, al centro).
-    y2 = (corazones.bottom if corazones is not None else y + f.get_height()) + 10
-    # Y debajo de lo que dice render_escolta ("Te sigue...", "Verificando...").
-    y2 = max(y2, getattr(jugador, "hud_abajo", 0) + 8)
-    ocupados = []
-    if tapado is not None:
-        ocupados.append((tapado.left - 40, tapado.right + 40))   # el cartel es más ancho
-    if jugador.panel is not None and jugador.panel.get("tipo") == "celular":
-        from screens.celular import _marco                       # ni detrás del celular
-        telefono, _ = _marco(vista, tapado)
-        ocupados.append((telefono.left - 12, telefono.right + 12))
-    t0, t1 = max(_tramos_libres(vista.x + 8, vista.right - 8, ocupados),
-                 key=lambda t: t[1] - t[0], default=(vista.x + 8, vista.right - 8))
-    renglones = partir_lineas(jugador.mensaje, f, max(80, t1 - t0 - 20))
+    # No cabe en una línea: en renglones, en ese mismo pedazo.
+    renglones = partir_lineas(jugador.mensaje, f, max(80, disponible))
     imgs = [f.render(r, True, jugador.mensaje_color) for r in renglones]
     caja = pygame.Rect(0, 0, max(i.get_width() for i in imgs), len(imgs) * f.get_linesize())
-    caja.midtop = ((t0 + t1) // 2, y2)
+    caja.midtop = ((t0 + t1) // 2, fila.y + 4)
     _caja_mensaje(screen, imgs, caja)
 
 
@@ -627,6 +690,16 @@ def _caja_mensaje(screen, imgs, caja):
     paso = caja.height // max(1, len(imgs))
     for k, img in enumerate(imgs):
         screen.blit(img, img.get_rect(midtop=(caja.centerx, caja.y + k * paso)))
+
+
+def tope_abajo(vista, jugador):
+    """Hasta dónde puede bajar lo que va abajo al centro (la pista y la barra
+    de progreso): el borde de arriba del tutorial si está en esta vista (lo
+    anotó partida.render_tutorial en el cuadro anterior), o el de la vista."""
+    anotado = getattr(jugador, "hud_tutorial", None)
+    if anotado is not None and anotado[0] == tuple(vista):
+        return anotado[1]
+    return vista.bottom
 
 
 def render_pista_zona(screen, vista, jugador):
@@ -654,9 +727,9 @@ def render_pista_zona(screen, vista, jugador):
     etiqueta = f.render(texto, True, COLOR_TITULO)
     caja = etiqueta.get_rect()
     caja.centerx = vista.centerx
-    # Bien arriba del borde: abajo a la izquierda va el pulso, y en la mitad
-    # inferior de la pantalla también la pista de teclas.
-    caja.bottom = vista.bottom - 96
+    # Bien arriba del borde: abajo a la izquierda va el pulso y abajo al
+    # centro, mientras dura, el tutorial (render_tutorial anota su borde).
+    caja.bottom = min(vista.bottom - 96, tope_abajo(vista, jugador) - 12)
 
     fondo = pygame.Surface((caja.width + 24, caja.height + 12), pygame.SRCALPHA)
     fondo.fill((14, 15, 28, 225))
@@ -710,32 +783,50 @@ def _dibujar_corazon(screen, centro, tamano, color):
     ])
 
 
-def _medidas_pulso(screen, vista):
+def _tam_corazon_vida(vista):
+    return max(14, min(20, vista.width // 48))
+
+
+def _ancho_vidas(vista, jugador):
+    """Lo que ocupan los corazones de las vidas dentro del recuadro del pulso."""
+    from entidades.jugador import VIDAS_INICIALES
+    if jugador is None or getattr(jugador, "vidas", None) is None:
+        return 0
+    tam = _tam_corazon_vida(vista)
+    if getattr(jugador, "vidas_infinitas", False):
+        return tam + 6 + ancho_infinito(tam)
+    return getattr(jugador, "vidas_max", VIDAS_INICIALES) * (tam + 5)
+
+
+def _medidas_pulso(screen, vista, jugador=None):
+    """El recuadro de abajo a la izquierda: corazón que late, lpm y, en la
+    misma línea, las vidas; debajo la barra del pulso. (Antes las vidas
+    tenían su propia fila arriba, debajo del HUD.)"""
     f = _fuente_para(vista)
     ancho_barra = max(110, min(200, vista.width // 5))
-    alto_barra = max(10, f.get_linesize() // 2)
+    alto_barra = max(8, f.get_linesize() // 2 - 2)
     x = vista.x + 16
-    base = vista.bottom - 16
-    if vista.bottom >= screen.get_height() - 2:
-        base -= 26   # deja libre la pista de teclas de abajo de la pantalla
-    fondo = pygame.Rect(x - 8, base - alto_barra - f.get_linesize() - 18,
-                        ancho_barra + 64, alto_barra + f.get_linesize() + 26)
+    base = vista.bottom - 14
+    ancho = max(ancho_barra + 56, 40 + f.size("100 lpm")[0] + 16 + _ancho_vidas(vista, jugador) + 10)
+    fondo = pygame.Rect(x - 8, base - alto_barra - f.get_linesize() - 16,
+                        ancho, alto_barra + f.get_linesize() + 24)
     return f, ancho_barra, alto_barra, x, base, fondo
 
 
-def rect_pulso(screen, vista):
+def rect_pulso(screen, vista, jugador=None):
     """Dónde va el recuadro del pulso (para poner cosas justo encima: el mapa
-    del Tecnomante, roles.render_minimapa)."""
-    return _medidas_pulso(screen, vista)[5]
+    del Tecnomante, roles.render_minimapa, y el tutorial)."""
+    return _medidas_pulso(screen, vista, jugador)[5]
 
 
 def render_pulso(screen, vista, jugador):
-    """Corazón que late al ritmo del pulso y la barra, abajo a la izquierda."""
+    """Corazón que late al ritmo del pulso, los lpm, las vidas y la barra,
+    abajo a la izquierda."""
     color = _color_pulso(jugador.pulso)
     golpe = _intensidad_latido(jugador.fase_latido)
-    f, ancho_barra, alto_barra, x, base, fondo = _medidas_pulso(screen, vista)
+    f, ancho_barra, alto_barra, x, base, fondo = _medidas_pulso(screen, vista, jugador)
     capa = pygame.Surface(fondo.size, pygame.SRCALPHA)
-    capa.fill((14, 15, 28, 205))
+    capa.fill((14, 15, 28, 190))
     screen.blit(capa, fondo.topleft)
 
     tamano = 26 + golpe * 8
@@ -751,9 +842,19 @@ def render_pulso(screen, vista, jugador):
     pygame.draw.rect(screen, color, lleno)
     pygame.draw.rect(screen, COLOR_BORDE, barra, 1)
 
+    # Las vidas, a la derecha de los lpm.
+    ancho_vidas = _ancho_vidas(vista, jugador)
+    if ancho_vidas:
+        _dibujar_vidas(screen, vista, jugador,
+                       (fondo.right - 10 - ancho_vidas, fondo.y + 6 + f.get_linesize() // 2))
+
     if jugador.visto:
         aviso = f.render("¡TE VEN!", True, COLOR_PULSO_PANICO)
-        screen.blit(aviso, (texto.get_width() + x + 52, fondo.y + 6))
+        caja = aviso.get_rect(bottomleft=(fondo.x + 6, fondo.y - 6))
+        tapa = pygame.Surface(caja.inflate(12, 6).size, pygame.SRCALPHA)
+        tapa.fill((14, 15, 28, 205))
+        screen.blit(tapa, caja.inflate(12, 6).topleft)
+        screen.blit(aviso, caja.topleft)
 
 
 def _vineta(tamano):
@@ -931,32 +1032,34 @@ def dibujar_corazon(screen, centro, tam, lleno, color=COLOR_VIDA):
 
 
 def render_vidas(screen, vista, jugador, tapado=None):
-    """Las vidas del jugador: corazones arriba a la izquierda, debajo del HUD
-    (a la derecha de la barra de confianza si caerían debajo de ella). El que
-    se acaba de perder (o de recuperar) parpadea un momento."""
+    """Las vidas ya no van solas: se dibujan dentro del recuadro del pulso
+    (render_pulso). Se deja el nombre para quien la llame."""
+    return
+
+
+def _dibujar_vidas(screen, vista, jugador, inicio):
+    """Los corazones de las vidas desde `inicio` (borde izquierdo, centro en
+    y). El que se acaba de perder (o de recuperar) parpadea un momento."""
     from entidades.jugador import VIDAS_INICIALES
     vidas = getattr(jugador, "vidas", None)
     if vidas is None:
         return
-    rect, tam = fila_vidas(vista, jugador, tapado)
-    fondo = pygame.Surface(rect.size, pygame.SRCALPHA)
-    fondo.fill((14, 15, 28, 170))
-    screen.blit(fondo, rect.topleft)
-    x = rect.x + 6 + tam // 2
-    y = rect.centery
+    tam = _tam_corazon_vida(vista)
+    x = inicio[0] + tam // 2
+    y = inicio[1]
     parpadeo = getattr(jugador, "vida_cambio_ms", 0) > 0 and (pygame.time.get_ticks() // 120) % 2
     if getattr(jugador, "vidas_infinitas", False):
         # Fácil: no se pierden vidas. Un corazón (parpadea si te atrapan) y ∞.
         dibujar_corazon(screen, (x, y), tam, True, (255, 240, 240) if parpadeo else COLOR_VIDA)
-        dibujar_infinito(screen, (x + tam // 2 + 8 + ancho_infinito(tam) // 2, y), tam,
+        dibujar_infinito(screen, (x + tam // 2 + 6 + ancho_infinito(tam) // 2, y), tam,
                          (255, 230, 235))
         return
     for i in range(getattr(jugador, "vidas_max", VIDAS_INICIALES)):
         lleno = i < vidas
         if parpadeo and i == vidas:      # el que se acaba de perder
-            dibujar_corazon(screen, (x + i * (tam + 6), y), tam, True, (255, 240, 240))
+            dibujar_corazon(screen, (x + i * (tam + 5), y), tam, True, (255, 240, 240))
             continue
-        dibujar_corazon(screen, (x + i * (tam + 6), y), tam, lleno)
+        dibujar_corazon(screen, (x + i * (tam + 5), y), tam, lleno)
 
 
 def ancho_infinito(tam):
@@ -976,24 +1079,37 @@ def dibujar_infinito(screen, centro, tam, color, grosor=None):
     pygame.draw.lines(screen, color, True, puntos, grosor or max(2, tam // 9))
 
 
+_capas_eliminado = {}
+
+
 def render_eliminado(screen, vista, jugador):
-    """Si el jugador ya no tiene vidas, su mitad de la pantalla lo dice."""
+    """Si el jugador ya no tiene vidas, su mitad de la pantalla lo dice.
+
+    La capa (velo y letreros) se arma una vez por tamaño de vista: antes era
+    una superficie del tamaño de la vista, nueva, y tres textos por cuadro."""
     if not getattr(jugador, "eliminado", False):
         return
-    capa = pygame.Surface(vista.size, pygame.SRCALPHA)
-    capa.fill((20, 6, 10, 170))
-    screen.blit(capa, vista.topleft)
-    f = _fuente_para(vista)
-    from juego.fuentes import fuente_de_tamano
-    grande = fuente_de_tamano(max(24, min(48, vista.width // 14)))
-    titulo = grande.render("ELIMINADO", True, COLOR_VIDA)
-    screen.blit(titulo, titulo.get_rect(center=(vista.centerx, vista.centery - grande.get_linesize())))
     veces = getattr(jugador, "vidas_max", 3)
-    for i, (texto, color) in enumerate(((f"Te atraparon {veces} {'vez' if veces == 1 else 'veces'}.",
-                                          COLOR_TEXTO),
-                                         ("Tus compañeros siguen: ¡ánimo desde afuera!", COLOR_TENUE))):
-        img = f.render(texto, True, color)
-        screen.blit(img, img.get_rect(center=(vista.centerx, vista.centery + i * (f.get_linesize() + 6))))
+    clave = (tuple(vista.size), veces)
+    capa = _capas_eliminado.get(clave)
+    if capa is None:
+        if len(_capas_eliminado) > 8:
+            _capas_eliminado.clear()
+        capa = pygame.Surface(vista.size, pygame.SRCALPHA)
+        capa.fill((20, 6, 10, 170))
+        f = _fuente_para(vista)
+        from juego.fuentes import fuente_de_tamano
+        grande = fuente_de_tamano(max(24, min(48, vista.width // 14)))
+        centro = (vista.width // 2, vista.height // 2)
+        titulo = grande.render("ELIMINADO", True, COLOR_VIDA)
+        capa.blit(titulo, titulo.get_rect(center=(centro[0], centro[1] - grande.get_linesize())))
+        for i, (texto, color) in enumerate(((f"Te atraparon {veces} {'vez' if veces == 1 else 'veces'}.",
+                                              COLOR_TEXTO),
+                                             ("Tus compañeros siguen: ¡ánimo desde afuera!", COLOR_TENUE))):
+            img = f.render(texto, True, color)
+            capa.blit(img, img.get_rect(center=(centro[0], centro[1] + i * (f.get_linesize() + 6))))
+        _capas_eliminado[clave] = capa
+    screen.blit(capa, vista.topleft)
 
 
 # -- Inventario ------------------------------------------------------------------------
@@ -1091,11 +1207,7 @@ NOMBRE_OBJETO = {"pieza": ("Pieza", "Piezas"),
                  "prueba_captura": ("Captura de cámara", "Capturas de cámara")}
 
 
-def render_inventario(screen, vista, jugador):
-    """Lo que lleva el jugador, en un cuadrito abajo a la derecha de su vista:
-    una fila por objeto, con su dibujito y "x3 Piezas"."""
-    if getattr(jugador, "eliminado", False):
-        return
+def _objetos_de(jugador):
     objetos = []
     if getattr(jugador, "piezas", 0) > 0:
         objetos.append(("pieza", jugador.piezas))
@@ -1105,31 +1217,46 @@ def render_inventario(screen, vista, jugador):
         cantidad = inventario.get(tipo, 0) if hasattr(inventario, "get") else int(tipo in inventario)
         if cantidad > 0:
             objetos.append((tipo, cantidad))
+    return objetos
+
+
+def ancho_inventario(vista, jugador):
+    """Más o menos lo que ocupa el cuadrito del inventario abajo a la derecha
+    (0 si va con las manos vacías): el tutorial se acomoda al lado."""
+    if getattr(jugador, "eliminado", False) or not _objetos_de(jugador):
+        return 0
+    return max(150, min(240, vista.width // 4))
+
+
+def render_inventario(screen, vista, jugador):
+    """Lo que lleva el jugador, en un cuadrito abajo a la derecha de su vista:
+    una fila por objeto, con su dibujito y "x3 Piezas". Con las manos vacías
+    no se dibuja nada (antes quedaba un "Inventario: vacío" fijo)."""
+    if getattr(jugador, "eliminado", False):
+        return
+    objetos = _objetos_de(jugador)
+    if not objetos:
+        return
     f = fuente_de_tamano(max(11, min(15, vista.width // 60)))
     tam = max(18, min(26, vista.width // 40))
-    texto_titulo = "Inventario"
-    if objetos and hasattr(jugador, "nombre_tecla"):
-        texto_titulo += f"  [{jugador.nombre_tecla('soltar')}] soltar"
-    titulo = f.render(texto_titulo, True, COLOR_TENUE)
+    titulo = None
+    if hasattr(jugador, "nombre_tecla"):
+        titulo = f.render(f"[{jugador.nombre_tecla('soltar')}] soltar", True, COLOR_TENUE)
     textos = [f.render(f"x{n} {NOMBRE_OBJETO[t][n > 1]}", True, COLOR_TEXTO) for t, n in objetos]
-    ancho = max([titulo.get_width()] + [tam + 8 + t.get_width() for t in textos] + [80]) + 16
+    ancho = max([titulo.get_width() if titulo else 0] + [tam + 8 + t.get_width() for t in textos]) + 16
     fila = max(tam, f.get_linesize()) + 4
-    alto = titulo.get_height() + 10 + max(1, len(objetos)) * fila
+    alto_titulo = titulo.get_height() + 6 if titulo else 0
+    alto = alto_titulo + 6 + len(objetos) * fila
     caja = pygame.Rect(0, 0, ancho, alto)
-    margen_abajo = 12
-    if vista.bottom >= screen.get_height() - 2:
-        margen_abajo = 40        # deja libre la línea de teclas de abajo
-    caja.bottomright = (vista.right - 12, vista.bottom - margen_abajo)
+    caja.bottomright = (vista.right - 12, vista.bottom - 12)
     fondo = pygame.Surface(caja.size, pygame.SRCALPHA)
     fondo.fill((14, 15, 28, 205))
     screen.blit(fondo, caja.topleft)
     pygame.draw.rect(screen, (70, 76, 110), caja, 1, border_radius=4)
-    screen.blit(titulo, (caja.x + 8, caja.y + 4))
-    y = caja.y + titulo.get_height() + 8
-    if not objetos:
-        vacio = f.render("vacío", True, (110, 116, 150))
-        screen.blit(vacio, (caja.x + 8, y))
-        return
+    y = caja.y + 4
+    if titulo:
+        screen.blit(titulo, (caja.x + 8, y))
+        y += alto_titulo
     for (tipo, _), texto in zip(objetos, textos):
         centro = (caja.x + 8 + tam // 2, y + fila // 2)
         _icono_objeto(screen, tipo, centro, tam)
