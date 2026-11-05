@@ -578,6 +578,9 @@ class Game:
             raise carga["error"]
         if carga["listo"] and carga["ms"] >= self.MIN_CARGA_MS and self.transitions.is_idle():
             self.carga, self.carga_final = None, carga
+            # Si un mando se conectó o desconectó mientras el otro hilo creaba
+            # a los jugadores, alguno pudo quedar con el dato viejo.
+            self._sincronizar_mandos()
             self.transitions.request(self, "partida")
 
     def _progreso_carga(self):
@@ -1728,6 +1731,13 @@ class Game:
             elif (self.segunda is not None and self.segunda.es_suyo(evento)
                   and evento.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION)):
                 continue        # el mouse en la otra pantalla no cuenta
+            elif evento.type in (pygame.JOYDEVICEADDED, pygame.JOYDEVICEREMOVED):
+                # Conectar o desconectar un mando se anota siempre, también
+                # mientras carga: antes ahí se tiraba el evento, el mando que se
+                # desconectaba seguía ocupando su lugar y, al reconectarlo, ya
+                # no había lugar para él (el jugador quedaba sin control).
+                self.mandos.evento(evento)
+                self._sincronizar_mandos()
             elif self.carga is not None:
                 continue        # cargando: no se toca nada mientras el otro hilo arma la partida
             elif evento.type == pygame.KEYDOWN:
@@ -1740,12 +1750,9 @@ class Game:
                 else:
                     self._mouse_en_mapa(evento.pos)
             elif evento.type in (pygame.JOYBUTTONDOWN, pygame.JOYHATMOTION,
-                                 pygame.JOYAXISMOTION, pygame.JOYDEVICEADDED,
-                                 pygame.JOYDEVICEREMOVED):
+                                 pygame.JOYAXISMOTION):
                 for puesto, accion in self.mandos.evento(evento):
                     self._tecla_mando(puesto, accion)
-                if evento.type in (pygame.JOYDEVICEADDED, pygame.JOYDEVICEREMOVED):
-                    self._sincronizar_mandos()
 
     def _tecla_mando(self, puesto, accion):
         """Un botón del mando: en partida y en la selección de rol es la tecla
