@@ -1184,9 +1184,13 @@ def configuracion(i, semilla, jugadores=None, dificultades=None, mapa=None):
     # Partidas "asistidas": los aliens ven y oyen menos, para que los bots (que
     # son peores que una persona en sigilo) lleguen a las fases del final.
     asistida = rng.random() < 0.5
+    # Partidas con "atajo": al terminar el tutorial ya abrieron las puertas con
+    # código y apagaron las consolas (como si lo hubieran hecho), para que
+    # también se jueguen la cápsula, los planos y la huida.
+    atajo = "capsula" if rng.random() < 0.45 else None
     return {"i": i, "semilla": semilla * 100003 + i, "jugadores": n, "dificultad": dif,
             "roles": roles, "mandos": mandos, "esquemas": esquemas, "mapa": mapa,
-            "asistida": asistida}
+            "asistida": asistida, "atajo": atajo}
 
 
 def jugar(cfg, max_s=480, dibujar=True, cada_dibujo=6, verbose=False):
@@ -1216,6 +1220,7 @@ def jugar(cfg, max_s=480, dibujar=True, cada_dibujo=6, verbose=False):
             b.otros = [o for o in bots if o is not b]
         vistos = {}
         cuadro = 0
+        atajo_pendiente = cfg.get("atajo")
         while t_ms < max_s * 1000 and g.current_screen == "partida":
             TECLAS.clear()
             for b in bots:
@@ -1260,6 +1265,14 @@ def jugar(cfg, max_s=480, dibujar=True, cada_dibujo=6, verbose=False):
             if g.mision.fase != fase:
                 fase = g.mision.fase
                 resumen["fases"][str(fase)] = round(t_ms / 1000)
+            if atajo_pendiente and not g.en_tutorial:
+                atajo_pendiente = None
+                m = g.mision
+                for i, puerta in enumerate(m.puertas):
+                    if not puerta["abierta"]:
+                        m.abrir_puerta(None, i)
+                for consola in m.consolas:
+                    consola["progreso"] = 1.0
             if cuadro % 10 == 0:
                 revisar_estado(g, mapa, reg, alcanzables, t_ms, vistos)
             t_ms += DT
@@ -1307,7 +1320,8 @@ def _imprimir_partida(r):
     cfg = r["cfg"]
     print(f"#{cfg['i']} {cfg['jugadores']}J {cfg['dificultad']:<11} {'+'.join(cfg['roles'])} "
           f"esquemas={cfg['esquemas']}{'' if cfg['mandos'] else ' (sin mandos)'}"
-          f"{' asistida' if cfg.get('asistida') else ''}: "
+          f"{' asistida' if cfg.get('asistida') else ''}"
+          f"{' atajo=' + cfg['atajo'] if cfg.get('atajo') else ''}: "
           f"{str(r['resultado']).upper()} en {r['duracion_s']} s | capturas {r['capturas']} "
           f"| fases {r['fases']}")
     for tipo, firma, detalle in r["problemas"]:
