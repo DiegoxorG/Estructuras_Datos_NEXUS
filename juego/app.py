@@ -1825,7 +1825,12 @@ class Game:
                              for e in self.esquemas]
         for jugador in self.jugadores:
             if jugador.esquema in PUESTOS_CON_MANDO:
+                tenia = jugador.con_mando
                 jugador.con_mando = self.mandos.hay_mando(jugador.esquema)
+                # Se le desconectó el que tenía (y no ha vuelto): mientras
+                # tanto la misión no da la partida por perdida (mision.actualizar).
+                jugador.mando_desconectado = not jugador.con_mando and (
+                    tenia or getattr(jugador, "mando_desconectado", False))
                 jugador.puede_moverse = jugador.con_mando and not jugador.eliminado
                 jugador.controles_nombre = (f"Mando {jugador.esquema - 1}" if jugador.con_mando
                                             else NOMBRE_CONTROLES[jugador.esquema])

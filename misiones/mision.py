@@ -1006,6 +1006,12 @@ class Mision:
         # para perder, o con 3 o 4 jugadores nunca se podría escapar.
         # Los eliminados (sin vidas) tampoco: ya no están en la partida.
         jugadores = [j for j in self.juego.jugadores if j.puede_moverse]
+        # Al que queda en pie se le desconectó el mando: cuenta como si
+        # siguiera ahí (se espera a que lo reconecten) en vez de perder.
+        sin_mando = [j for j in self.juego.jugadores if getattr(j, "mando_desconectado", False)
+                     and not getattr(j, "eliminado", False)]
+        if not jugadores and sin_mando:
+            jugadores = sin_mando
         if not jugadores:
             if any(getattr(j, "eliminado", False) for j in self.juego.jugadores):
                 self.resultado = "derrota"     # eliminaron a todos (sin vidas)

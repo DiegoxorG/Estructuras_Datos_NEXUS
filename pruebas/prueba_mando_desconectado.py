@@ -138,4 +138,46 @@ assert g.esquemas == [None, None], \
 g._dibujar()
 print("controles: si se desconecta un mando ya tomado, queda libre otra vez")
 
+# ---------- En partida: el único en pie juega con mando ----------
+g = App.Game()
+conectados.clear()
+g.mandos.por_puesto = {2: uno}
+partida(g, 3)
+j1, j2, j3 = g.jugadores
+assert j3.con_mando and j3.puede_moverse
+j1.eliminar(); j2.eliminar()
+g._actualizar_partida(DT)
+assert g.mision.resultado is None
+desconectar(uno)
+g._manejar_eventos()
+assert not j3.puede_moverse
+for _ in range(30):
+    g._actualizar_partida(DT)
+assert g.mision.resultado is None and g.transitions.is_idle(), \
+    "se soltó el cable del mando y la partida se dio por perdida"
+g._dibujar()
+# Lo vuelve a conectar (otro instance_id, como hace SDL) y sigue jugando.
+otra_vez = MandoFalso(78)
+conectar(0, otra_vez)
+g._manejar_eventos()
+assert g.mandos.por_puesto.get(2) is otra_vez and j3.con_mando and j3.puede_moverse
+x0 = j3.hitbox.x
+otra_vez.ejes[M.EJE_X] = 1.0
+for _ in range(15):
+    g._actualizar_partida(DT)
+otra_vez.ejes[M.EJE_X] = 0.0
+assert j3.hitbox.x > x0, "con el mando otra vez conectado se mueve"
+print("partida: desconectar el mando del último en pie no es perder; al reconectarlo sigue")
+
+# Y si nunca tuvo mando (3 jugadores sin mandos) y eliminan a los otros dos,
+# sí se pierde, como antes: el 3 no puede jugar.
+g = App.Game()
+g.mandos.por_puesto = {}
+partida(g, 3)
+j1, j2, j3 = g.jugadores
+assert not j3.puede_moverse
+j1.eliminar(); j2.eliminar()
+g._actualizar_partida(DT)
+assert g.mision.resultado == "derrota"
+print("sin mando desde el principio: eliminar a los otros dos sigue siendo perder")
 print("OK")
