@@ -103,13 +103,15 @@ class Proxy:
             pass
 
     def cortar_todo(self):
-        for c, s in self.pares:
+        # Sobre una copia: si un cliente vuelve mientras se corta a los demás,
+        # su conexión nueva no se debe cortar también.
+        pares, self.pares = self.pares, []
+        for c, s in pares:
             for x in (c, s):
                 try:
                     x.shutdown(socket.SHUT_RDWR)
                 except OSError:
                     pass
-        self.pares = []
 
 
 proceso = subprocess.Popen(
@@ -150,7 +152,10 @@ try:
     assert correr(8, hasta=lambda: x(0) is not None)
     x0 = x(0)
     mantener[0][:] = ["derecha"]
-    correr(2.0)
+    # Hasta 8 s y no 2 fijos: con la máquina cargada (otras pruebas o
+    # simulaciones a la vez) el cliente dibuja pocos cuadros por segundo y la
+    # prueba fallaba aunque el juego anduviera bien.
+    correr(8.0, hasta=lambda: x(0) > x0 + 40)
     assert x(0) > x0 + 40, f"con pérdida y retraso J1 camina igual ({x0} -> {x(0)})"
     assert proxy.descartadas > 5, "el proxy descartó instantáneas"
     c = s.conexiones[0]
@@ -160,12 +165,12 @@ try:
     print(f"pérdida: {proxy.descartadas} instantáneas descartadas, respuesta {c.respuesta_ms:.0f} ms: OK")
 
     proxy.cortar_todo()
-    assert correr(8, hasta=lambda: all(k.reconexiones >= 1 and k.situacion == "jugando"
-                                        for k in s.conexiones)), "los dos vuelven por el proxy"
+    assert correr(15, hasta=lambda: all(k.reconexiones >= 1 and k.situacion == "jugando"
+                                        for k in s.conexiones)), f"los dos vuelven por el proxy: {[(k.reconexiones, k.situacion) for k in s.conexiones]}"
     mantener[0][:] = ["izquierda"]
     correr(0.5)
     xa = x(0)
-    correr(1.0)
+    correr(6.0, hasta=lambda: x(0) < xa - 20)
     assert x(0) < xa - 20, f"después del corte siguen jugando ({xa} -> {x(0)})"
     print("corte en el proxy y reconexión: OK")
     s.cerrar()

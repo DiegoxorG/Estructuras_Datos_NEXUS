@@ -53,6 +53,11 @@ SILENCIO_S = 3.0
 RECONECTAR_S = 10.0
 
 
+class Rechazado(ConexionCerrada):
+    """El servidor contestó `error` al saludo (partida llena, token de otra
+    partida, otra versión): no vale la pena reintentar."""
+
+
 class Conexion:
     """El socket de UN jugador local, más el hilo que lee sus instantáneas."""
 
@@ -100,7 +105,9 @@ class Conexion:
         bienvenida = lector.siguiente()
         if bienvenida.get("tipo") != "bienvenida":
             sock.close()
-            raise ConexionCerrada(bienvenida.get("texto", "el servidor no dio la bienvenida"))
+            if bienvenida.get("tipo") == "error":
+                raise Rechazado(bienvenida.get("texto", "el servidor no lo dejó entrar"))
+            raise ConexionCerrada("el servidor no dio la bienvenida")
         sock.settimeout(SILENCIO_S)
         return sock, lector, bienvenida
 
@@ -163,10 +170,13 @@ class Conexion:
         while time.time() < limite and not self.cerrando:
             try:
                 self.sock, self.lector, _ = self._saludar(1.0, 5.0)
-            except ConexionCerrada as error:
+            except Rechazado as error:
                 self.fin_texto = str(error)
                 return False          # el servidor dijo que no (otra partida)
-            except OSError:
+            except (OSError, ConexionCerrada):
+                # Se cortó a mitad del saludo (wifi que va y viene, el
+                # servidor que todavía no soltó la conexión vieja): eso no es
+                # un "no", se vuelve a intentar hasta que se acabe el plazo.
                 time.sleep(0.3)
                 continue
             self.reconstructor = Reconstructor()     # la siguiente llega entera
