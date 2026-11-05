@@ -13,6 +13,7 @@ from juego.fuentes import fuente
 
 OPCIONES_MENU = [
     ("Jugar", "jugar"),
+    ("Jugar en red", "red"),
     ("Logros", "logros"),
     ("Ayuda", "ayuda"),
     ("Créditos", "creditos"),

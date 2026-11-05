@@ -2073,6 +2073,11 @@ class Game:
             self.abrir_cantidad()
         elif accion == "salir":
             self.running = False
+        elif accion == "red":
+            # Menú > Jugar en red (cliente_servidor/lanzador.py): tiene su
+            # propio bucle y vuelve aquí, al menú, cuando se acaba.
+            from cliente_servidor import lanzador
+            lanzador.abrir(self)
         elif accion == "logros":
             self.abrir_catalogo_logros()
         else:

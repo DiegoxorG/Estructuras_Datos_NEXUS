@@ -1,0 +1,221 @@
+"""El "espejo": un Game de verdad en el cliente que solo sirve para dibujar.
+
+En vez de reescribir el dibujo para el modo en red, el cliente arma la misma
+partida que el servidor (mismo mapa, roles, dificultad y semilla) con el
+`Game` de juego/app.py, NUNCA la actualiza (no corre `_actualizar_partida`:
+el que manda es el servidor) y en cada cuadro le copia encima lo que dice la
+instantánea: posiciones, vidas, paneles, misión, eventos, linterna... Después
+llama las MISMAS funciones de dibujo del modo local (`_dibujar_partida_en`,
+que usa screens/partida.py, paneles.py, celular.py, oscuridad.py...). Así se
+ve igual que el local: vistas divididas, HUD, oscuridad y visión, sustos,
+paneles, celular.
+
+Lo que no viaja (referencias entre objetos, imágenes, árboles de
+comportamiento) se queda como lo armó el espejo; ver cliente_servidor/estado.py.
+"""
+
+import random
+
+import pygame
+
+from cliente_servidor import estado as E
+from cliente_servidor.protocolo import lista as a_lista
+
+
+class _Preso(dict):
+    """En el servidor `jugador.preso` es la celda (un dict); en el espejo
+    basta con algo que diga "sí" y aguante un .get()."""
+
+    def __bool__(self):
+        return True
+
+
+class Espejo:
+    def __init__(self, juego, bienvenida):
+        self.g = juego
+        self.b = bienvenida
+        self.aliens = {}           # nombre -> objeto Alien del espejo
+        self.listo = False
+        self.error = None
+
+    def preparar(self):
+        """Arma la partida igual que el servidor (tarda unos segundos: se
+        puede llamar desde otro hilo, como la pantalla de carga del juego)."""
+        from juego import app as App
+        from juego.dificultad import Dificultad
+        g, b = self.g, self.b
+        if b.get("dificultad"):
+            g.dificultad = Dificultad(b["dificultad"])
+        g.cantidad_jugadores = b["jugadores"]
+        g.abrir_seleccion_roles(ir=False)
+        for estado, rol in zip(g.seleccion_roles, b["roles"]):
+            estado["rol"], estado["listo"] = rol, True
+        from juego import objetos_mapa
+        mapa_activo = objetos_mapa.mapa_activo
+        objetos_mapa.mapa_activo = lambda: b["mapa"]
+        try:
+            random.seed(b.get("semilla"))
+            g._preparar_partida()
+        finally:
+            objetos_mapa.mapa_activo = mapa_activo
+        g.saltar_tutorial()
+        if not b.get("presentaciones", True):
+            g.presentacion = None
+        for alien in list(g.aliens) + [getattr(g, "sombra", None), getattr(g, "cambiaformas", None)]:
+            if alien is not None and hasattr(alien, "nombre"):
+                self.aliens[alien.nombre] = alien
+        self.listo = True
+
+    # -- Copiar la instantánea encima ----------------------------------------------
+
+    def aplicar(self, secciones, interpolado=None):
+        g = self.g
+        interpolado = interpolado or {}
+        glob = secciones.get("g", {})
+        for clave, v in glob.items():
+            if clave.startswith("G."):
+                try:
+                    setattr(g, clave[2:], E.a_python(v))
+                except (AttributeError, TypeError):
+                    pass
+        for i, jugador in enumerate(g.jugadores):
+            datos = secciones.get(f"j{i}")
+            if datos is not None:
+                self._jugador(jugador, datos, interpolado.get(f"j{i}"))
+        self._aliens(secciones.get("al", {}), interpolado)
+        from cliente_servidor.servidor import OBJETOS, LISTAS
+        for clave, nombre in OBJETOS.items():
+            datos = secciones.get(clave)
+            objeto = getattr(g, nombre, None)
+            if datos is None:
+                continue
+            if not datos:
+                if nombre in ("presentacion", "tutorial"):
+                    setattr(g, nombre, None)       # (en el servidor ya no está)
+                continue
+            if objeto is not None:
+                cuerpo = {k: v for k, v in datos.items() if k != "ok"}
+                E.aplicar(objeto, cuerpo)
+        for clave, nombre in LISTAS.items():
+            datos = secciones.get(clave)
+            lista = getattr(g, nombre, None)
+            if datos is None or not isinstance(lista, list):
+                continue
+            nuevos = a_lista(datos)
+            for k, d in enumerate(nuevos):
+                if d is None:
+                    continue
+                if k < len(lista):
+                    if hasattr(lista[k], "__dict__"):
+                        E.aplicar(lista[k], d)
+                    else:
+                        lista[k] = E._mezclar(lista[k], d)
+                elif isinstance(d, dict) and (not lista or isinstance(lista[0], dict)):
+                    lista.append(E.a_python(d))
+            if len(lista) > len(nuevos):
+                del lista[len(nuevos):]
+
+    def _jugador(self, j, datos, pos):
+        p = j.personaje
+        x, y = (pos[0], pos[1]) if pos else (datos["x"], datos["y"])
+        p.x, p.y = x, y
+        p.sync_hitbox_from_sprite()
+        p.direccion = datos["dir"]
+        p.moviendose = datos["mov"]
+        # La animación es del cliente (no vale la pena mandar el cuadro).
+        nuevo = "walking" if datos["mov"] else (
+            "breathing" if p.animaciones.get("breathing", {}).get(p.direccion) else "idle")
+        if nuevo != p.estado:
+            p.estado, p.frame_actual, p.contador_animacion = nuevo, 0, 0
+        atributos = {k[2:]: v for k, v in datos.items() if k.startswith("a.")}
+        panel = atributos.pop("panel", None)
+        objetos = atributos.pop("objetos", None)
+        E.aplicar(j, atributos)
+        # El panel: si cambió de tipo se arma de nuevo; si no, se mezcla (así
+        # no se pierden los objetos que el espejo le había puesto).
+        if panel is None:
+            j.panel = None
+        elif not isinstance(j.panel, dict) or j.panel.get("tipo") != panel.get("tipo"):
+            j.panel = E.a_python(panel)
+        else:
+            E._mezclar(j.panel, panel)
+            for clave in [k for k in j.panel if k not in panel and not hasattr(j.panel[k], "__dict__")]:
+                del j.panel[clave]
+        if objetos is not None:
+            j.objetos.clear()
+            j.objetos.update(objetos)
+        j.preso = _Preso() if datos.get("preso") else None
+        indice = datos.get("escondite")
+        j.escondite = (self.g.escondites[indice] if indice is not None
+                       and indice < len(self.g.escondites) else None)
+        j.linterna.angulo = pos[2] if pos else datos.get("lin", j.linterna.angulo)
+        arbol = getattr(j, "arbol", None)
+        if arbol is not None:
+            E.aplicar(arbol, {k[2:]: v for k, v in datos.items() if k.startswith("h.")})
+
+    def _aliens(self, datos, interpolado):
+        vistos = []
+        for i in range(datos.get("n", 0)):
+            pos, resto = datos.get(str(i)), datos.get(f"{i}d")
+            if pos is None or resto is None:
+                continue
+            nombre, _alcance, _medio, otros = resto
+            alien = self.aliens.get(nombre)
+            if alien is None:
+                continue
+            x, y, ang = interpolado.get(f"a{i}", pos)
+            alien.hitbox.center = (round(x), round(y))
+            alien.angulo = ang
+            for clave, v in otros.items():
+                if clave != "tipo":
+                    try:
+                        setattr(alien, clave, v)
+                    except AttributeError:
+                        pass
+            vistos.append(alien)
+        self.g.aliens = vistos
+
+    def sonar(self, sonidos):
+        for nombre, volumen in sonidos or ():
+            try:
+                self.g.ambiente.sonar(nombre, volumen)
+            except Exception:
+                pass
+
+    # -- Dibujar ---------------------------------------------------------------------
+
+    def dibujar(self, pantalla, locales):
+        """Las vistas de los jugadores `locales` (números de jugador) con el
+        dibujo del modo local."""
+        g = self.g
+        dueños = [g.jugadores[i] for i in locales if i < len(g.jugadores)]
+        extras = g._extras_dibujo()
+        pantalla_original = g.screen
+        g.screen = pantalla
+        try:
+            g._dibujar_partida_en(pantalla, dueños, extras)
+            if g.presentacion is None or not g.presentacion.abierta:
+                from screens.logros import render_aviso_logro
+                try:
+                    render_aviso_logro(pantalla, g.logros)
+                except (AttributeError, TypeError, KeyError):
+                    pass        # (el aviso de logro es un adorno: que no tumbe el dibujo)
+        finally:
+            g.screen = pantalla_original
+
+    def dibujar_resultados(self, pantalla):
+        """La pantalla de resultados del modo local, con los datos del espejo."""
+        from screens.resultados import render_resultados
+        g = self.g
+        render_resultados(pantalla, g.jugadores, g.font, g.small_font, g.mision, g.equipo,
+                          g.infiltrado, g.logros, 0, g.nexus, g.cambiaformas, g.npcs,
+                          g.dificultad, g.tiempo_jugado_ms)
+
+
+def captura_local(juego, locales):
+    """Lo que dibuja el modo local para `locales`, sin pasar por la red (para
+    comparar en pruebas/prueba_red_capturas.py)."""
+    pantalla = pygame.Surface(juego.screen.get_size())
+    dueños = [juego.jugadores[i] for i in locales]
+    juego._dibujar_partida_en(pantalla, dueños, juego._extras_dibujo())
+    return pantalla
