@@ -299,15 +299,18 @@ class Entrada:
 
 # -- La sesión en la ventana del juego -------------------------------------------------
 
-def aviso(pantalla, lineas, color=(230, 230, 230)):
-    """Una pantalla de texto centrado (conectando, esperando, se cortó...)."""
+def aviso(pantalla, lineas, color=(230, 230, 230), extra=(), color_extra=(120, 220, 255)):
+    """Una pantalla de texto centrado (conectando, esperando, se cortó...).
+    `extra`: líneas más abajo y de otro color (la IP para unirse)."""
     from juego.fuentes import fuente
     pantalla.fill((12, 14, 22))
     letra = fuente("subtitle")
-    y = pantalla.get_height() // 2 - 24 * len(lineas)
-    for linea in lineas:
-        imagen = letra.render(linea, True, color)
-        pantalla.blit(imagen, imagen.get_rect(midtop=(pantalla.get_width() // 2, y)))
+    todas = [(l, color) for l in lineas] + ([("", color)] if extra else []) + [(l, color_extra) for l in extra]
+    y = pantalla.get_height() // 2 - 24 * len(todas)
+    for linea, c in todas:
+        if linea:
+            imagen = letra.render(linea, True, c)
+            pantalla.blit(imagen, imagen.get_rect(midtop=(pantalla.get_width() // 2, y)))
         y += 48
 
 
@@ -375,7 +378,8 @@ class Sesion:
     def _texto_espera(self):
         espera = self.conexiones[0].espera or {}
         return (f"Conectado como " + ", ".join(f"J{c.jugador + 1}" for c in self.conexiones)
-                + (f"  ·  faltan {espera['faltan']} jugadores" if espera.get("faltan") else ""))
+                + ((f"  ·  falta 1 jugador" if espera["faltan"] == 1 else f"  ·  faltan {espera['faltan']} jugadores")
+                   if espera.get("faltan") else ""))
 
     def paso(self, pantalla, eventos=None):
         """Un cuadro. Devuelve False cuando la sesión terminó (ver `motivo`)."""
@@ -399,7 +403,10 @@ class Sesion:
         conexion = next((c for c in vivas if c.ultimo_estado() is not None), vivas[0])
         secciones = conexion.ultimo_estado()
         if secciones is None or (not self.espejo.listo and self.espejo.error is None):
-            aviso(pantalla, ["Esperando jugadores...", self._texto_espera()])
+            # Quien creó la partida ve aquí la IP que tiene que escribir la
+            # otra laptop (antes solo salía en el menú de Jugar en red).
+            aviso(pantalla, ["Esperando jugadores...", self._texto_espera()],
+                  extra=getattr(self, "info_espera", ()))
             return True
         glob = secciones.get("g", {})
         self._dibujar(pantalla, conexion, secciones)
@@ -480,12 +487,14 @@ class Sesion:
             c.cerrar()
 
 
-def jugar(juego, host, puerto, esquemas, avisar=print):
+def jugar(juego, host, puerto, esquemas, avisar=print, info_espera=()):
     """Todo junto, en la ventana del juego: conectar, armar el espejo, jugar.
     Devuelve el motivo del final ("menu", "salir", "terminada", "perdida",
-    "fin" o "error")."""
+    "fin" o "error"). `info_espera`: líneas de más para la pantalla de
+    "Esperando jugadores" (la IP de esta laptop, si la partida es de aquí)."""
     pantalla = juego.screen
     sesion = Sesion(juego, host, puerto, esquemas, avisar)
+    sesion.info_espera = list(info_espera)
     try:
         sesion.conectar(pantalla)
     except (OSError, ConexionCerrada) as error:

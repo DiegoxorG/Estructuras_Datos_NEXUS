@@ -44,6 +44,24 @@ def ip_local():
         return "127.0.0.1"
 
 
+def ips_locales():
+    """Todas las IPv4 de esta laptop que sirven para la red local, la de
+    salida primero. Puede haber varias (wifi, cable, adaptadores virtuales de
+    VirtualBox o WSL): se muestran todas para que la otra laptop pruebe."""
+    ips = []
+    principal = ip_local()
+    if principal and not principal.startswith("127."):
+        ips.append(principal)
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip not in ips and not ip.startswith(("127.", "169.254.")):
+                ips.append(ip)
+    except OSError:
+        pass
+    return ips or ["127.0.0.1"]
+
+
 def levantar_servidor(jugadores, dificultad, puerto=PUERTO, host="0.0.0.0", extra=()):
     """El servidor en otro proceso. Devuelve (proceso, puerto) cuando ya
     escucha, o (None, texto del error)."""
@@ -192,9 +210,16 @@ def _jugar(juego, menu, accion):
         texto = menu.ip.strip() or "127.0.0.1"
         host, _, puerto = texto.partition(":")
         puerto = int(puerto) if puerto.isdigit() else PUERTO
+    info = []
+    if proceso is not None:
+        ips = ips_locales()
+        info = [f"Para unirse desde otra laptop: IP {ips[0]}  (puerto {puerto})"]
+        if len(ips) > 1:
+            info.append("Si no conecta, prueba con: " + ", ".join(ips[1:4]))
+        info.append("Las dos laptops en el mismo wifi  ·  Esc cancela")
     try:
         motivo = cliente.jugar(juego, host, puerto, esquemas,
-                               avisar=lambda t: print("[red]", t, flush=True))
+                               avisar=lambda t: print("[red]", t, flush=True), info_espera=info)
     finally:
         if proceso is not None:
             # Como Ctrl+C: el servidor alcanza a mandar `fin` a los de otras
