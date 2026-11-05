@@ -121,4 +121,21 @@ g._actualizar_carga(DT)
 assert not j3.con_mando and not j3.puede_moverse, "al terminar de cargar no se revisan los mandos"
 print("al terminar de cargar se revisa quién tiene mando")
 
+# ---------- ¿Con qué juega cada uno? ----------
+g = App.Game()
+conectados.clear()
+g.mandos.por_puesto = {2: uno, 3: dos}
+g.cantidad_jugadores = 2
+g.abrir_controles(); avanzar(g)
+assert g.current_screen == "controles" and g.esquemas == [None, None]
+pygame.event.post(pygame.event.Event(pygame.JOYBUTTONDOWN, instance_id=77, button=M.BOTONES["A"], joy=0))
+g._manejar_eventos(); avanzar(g)
+assert g.esquemas == [2, None]
+desconectar(uno)
+g._manejar_eventos()
+assert g.esquemas == [None, None], \
+    f"el jugador 1 se queda con un mando que ya no está: {g.esquemas}"
+g._dibujar()
+print("controles: si se desconecta un mando ya tomado, queda libre otra vez")
+
 print("OK")

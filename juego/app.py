@@ -1817,6 +1817,12 @@ class Game:
 
     def _sincronizar_mandos(self):
         """Se conectó o desconectó un mando con la partida andando."""
+        if self.current_screen == "controles":
+            # El mando que alguien ya había tomado y se desconectó queda libre:
+            # si no, ese jugador entraba a la partida con un mando que no está
+            # (y desde el teclado no había cómo soltarlo).
+            self.esquemas = [None if e in PUESTOS_CON_MANDO and not self.mandos.hay_mando(e) else e
+                             for e in self.esquemas]
         for jugador in self.jugadores:
             if jugador.esquema in PUESTOS_CON_MANDO:
                 jugador.con_mando = self.mandos.hay_mando(jugador.esquema)
