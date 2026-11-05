@@ -1994,8 +1994,15 @@ class Game:
 
     def _jugador_con_mapa_en(self, pos):
         """(jugador, punto del mundo) si `pos` cae en el mapa de la Emisión de
-        alguien, o (None, None)."""
-        for jugador in self.jugadores:
+        alguien, o (None, None).
+
+        Solo los de la pantalla principal: el mouse de la otra no cuenta
+        (_manejar_eventos) y el `rect_mapa` de quien juega allá está en
+        coordenadas de esa pantalla. Con la ventana del alien nuevo abierta
+        el juego está detenido: tampoco."""
+        if self.presentacion is not None and self.presentacion.abierta:
+            return None, None
+        for jugador in self._reparto_pantallas()[0]:
             panel = jugador.panel
             if panel is None or panel.get("tipo") != "emision" or "rect_mapa" not in panel:
                 continue
