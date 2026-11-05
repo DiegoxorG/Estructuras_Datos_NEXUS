@@ -10,11 +10,13 @@ Aquí no hay nada de pygame: lo usan igual el servidor (sin ventana), el
 cliente y las pruebas.
 """
 
+import base64
 import json
 import socket
+import zlib
 
 
-VERSION = 1
+VERSION = 2
 HOST = "127.0.0.1"
 PUERTO = 5050
 
@@ -23,6 +25,9 @@ PUERTO = 5050
 # local) y manda una instantánea cada 2 cuadros: 30 por segundo.
 HZ_JUEGO = 60
 CUADROS_POR_INSTANTANEA = 2
+# Casi todas las instantáneas llevan solo lo que cambió desde la anterior; cada
+# tantos cuadros va una completa por si acaso (y siempre al que la pide).
+CADA_COMPLETA = 5 * HZ_JUEGO
 
 # Lo que el cliente puede pedir. Son nombres de acciones, no teclas: cada
 # cliente traduce sus teclas o su mando, y el servidor las vuelve a traducir a
@@ -90,3 +95,68 @@ class LectorLineas:
             if not datos:
                 raise ConexionCerrada("el otro lado cerró")
             self.bufer += datos
+
+
+def comprimir(datos):
+    """Un dict -> texto base64 de su JSON comprimido con zlib (para que siga
+    siendo una línea de JSON)."""
+    crudo = json.dumps(datos, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+    return base64.b64encode(zlib.compress(crudo, 6)).decode("ascii")
+
+
+def descomprimir(texto):
+    return json.loads(zlib.decompress(base64.b64decode(texto)).decode("utf-8"))
+
+
+class Reconstructor:
+    """Arma la instantánea completa a partir de la primera completa y las
+    delta que le siguen. Si falta una (la `base` de la delta no es la última
+    que se tiene), no se puede seguir: `aplicar` devuelve None y hay que
+    pedir una completa ({"tipo": "completa"})."""
+
+    def __init__(self):
+        self.secciones = None
+        self.cuadro = None
+
+    def aplicar(self, mensaje):
+        base, cambios = mensaje.get("base"), mensaje.get("s") or {}
+        if "z" in mensaje:
+            cambios = descomprimir(mensaje["z"])
+        if base is None:
+            self.secciones = {k: dict(v) for k, v in cambios.items()}
+        elif self.secciones is None or base != self.cuadro:
+            return None
+        else:
+            for seccion, datos in cambios.items():
+                destino = self.secciones.setdefault(seccion, {})
+                # (None vale lo mismo para "ahora vale None" y "ya no está")
+                destino.update(datos)
+        self.cuadro = mensaje.get("c")
+        return self.secciones
+
+
+def legible(secciones, cuadro=None):
+    """La instantánea "de leer" (la del prototipo): {"t", "fase", ...,
+    "jugadores": [...], "aliens": [...]}. La usan el dibujo sencillo y las
+    pruebas."""
+    salida = dict(secciones.get("g", {}))
+    salida["cuadro"] = cuadro
+    jugadores = []
+    i = 0
+    while f"j{i}" in secciones:
+        jugadores.append(secciones[f"j{i}"])
+        i += 1
+    salida["jugadores"] = jugadores
+    aliens = secciones.get("al", {})
+    salida["aliens"] = []
+    for i in range(aliens.get("n", 0)):
+        (x, y, ang), (nombre, vis, medio, otros) = aliens[str(i)], aliens[f"{i}d"]
+        salida["aliens"].append({"nombre": nombre, "tipo": otros.get("tipo", ""), "x": x, "y": y,
+                                 "ang": ang, "vis": vis, "medio": medio,
+                                 "acc": otros.get("accion", "")})
+    return salida
+
+
+def lista(seccion):
+    """Una sección de lista ({"n": 3, "0": ..., "1": ..., "2": ...}) -> lista."""
+    return [seccion.get(str(i)) for i in range(seccion.get("n", 0))]

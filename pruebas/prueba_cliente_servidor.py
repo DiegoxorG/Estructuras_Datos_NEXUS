@@ -18,7 +18,7 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 os.chdir(RAIZ)
 
-from cliente_servidor.protocolo import VERSION, LectorLineas, enviar, sin_nagle
+from cliente_servidor.protocolo import VERSION, LectorLineas, enviar, sin_nagle, Reconstructor, legible
 
 
 def arrancar_servidor():
@@ -27,7 +27,7 @@ def arrancar_servidor():
     proceso = subprocess.Popen(
         [sys.executable, "-u", "-m", "cliente_servidor.servidor", "--jugadores", "2",
          "--puerto", "0", "--mapa", "Nave", "--segundos", "30",
-         "--sin-presentaciones", "--aliens-quietos"],
+         "--sin-presentaciones", "--aliens-quietos", "--espera", "0"],
         cwd=RAIZ, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     limite = time.time() + 20
     while time.time() < limite:
@@ -47,6 +47,7 @@ class ClienteFalso:
         sin_nagle(self.sock)
         self.lector = LectorLineas(self.sock)
         self.n = 0
+        self.reconstructor = Reconstructor()
         enviar(self.sock, {"tipo": "hola", "version": VERSION, "nombre": nombre})
         self.bienvenida = self.lector.siguiente()
         assert self.bienvenida["tipo"] == "bienvenida", self.bienvenida
@@ -57,11 +58,16 @@ class ClienteFalso:
                            "mantener": list(mantener), "pulsar": list(pulsar)})
 
     def estado(self):
-        """La siguiente instantánea (se salta los avisos de espera)."""
+        """La siguiente instantánea, ya armada con las delta y en la forma
+        "legible" (se salta los avisos de espera)."""
         while True:
             m = self.lector.siguiente()
             if m["tipo"] == "estado":
-                return m
+                secciones = self.reconstructor.aplicar(m)
+                assert secciones is not None, "por TCP no se pierde ninguna delta"
+                estado = legible(secciones, m["c"])
+                estado["ack"] = m["ack"]
+                return estado
 
     def ultimo_estado(self, segundos):
         """Lee lo que llegue durante `segundos` y devuelve la última instantánea."""
