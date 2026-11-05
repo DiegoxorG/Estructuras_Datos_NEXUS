@@ -67,8 +67,12 @@ queda suyo; dos no pueden tener el mismo, y presionarlo otra vez lo suelta. Asi
 se puede jugar de 2 con dos mandos. Sin mandos no sale y es como siempre: el
 jugador 1 con WASD, el 2 con flechas, y el 3 y el 4 (sin mando) escogen rol con
 letras del teclado pero en partida no se mueven. En los menus el mando hace de
-flechas y Enter. `python pruebas/probar_mando.py` muestra que boton manda cada
-cosa por si algun mando sale con los numeros cambiados (se ajusta en `mandos.py`). No hay tecla de correr; la de sigilo hace caminar a la
+flechas y Enter. Los botones van por posicion, asi que sirven el de Xbox y el de
+PlayStation (PS4/PS5): en PlayStation, A = Cruz, X = Cuadrado, Y = Triangulo,
+B = Circulo, RB = R1, LB/LT = L1/L2 y START = Options; cada jugador ve en pantalla
+los botones de su mando. `python pruebas/probar_mando.py` muestra, al conectar cada
+mando, si se reconocio (por posicion) o va por numeros de respaldo, de que tipo es
+y que accion hace cada boton (los numeros de respaldo se ajustan en `mandos.py`). No hay tecla de correr; la de sigilo hace caminar a la
 mitad de velocidad y casi sin ruido.
 
 Teclas globales: **[F11]** alterna ventana, **[F3]** muestra los FPS y cuanto tarda
