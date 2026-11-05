@@ -1072,7 +1072,7 @@ def revisar_estado(g, mapa, reg, alcanzables, t_ms, vistos):
             mal(("celda_huerfana",), f"celda con preso {p.rol} que no está en ella")
     # ¿Se puede terminar todavía?
     from misiones.mision import PIEZAS_NECESARIAS
-    vivos = [j for j in g.jugadores if not j.eliminado]
+    vivos = [j for j in g.jugadores if not j.eliminado and j.puede_moverse]
     if m.fase in ("prision", "sabotaje", "capsula") and m.piezas_entregadas < PIEZAS_NECESARIAS:
         sueltas = sum(1 for p in g.piezas if not p["recogida"])
         llevan = sum(j.piezas for j in g.jugadores)

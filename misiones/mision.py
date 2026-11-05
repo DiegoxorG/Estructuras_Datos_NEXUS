@@ -181,7 +181,12 @@ class Mision:
             return (int(p[0] * ancho), int(p[1] * alto))
 
         self.activa = bool(objetos.get("capsula"))
-        roles = {j.rol for j in juego.jugadores}
+        # Solo cuentan los que se pueden mover: un puesto de mando sin mando
+        # (jugador 3 o 4 sin control) no camina, y si era el Tecnomante o el
+        # Forjador no aparecían el decodificador ni el kit: la misión quedaba
+        # imposible.
+        roles = {j.rol for j in juego.jugadores if getattr(j, "puede_moverse", True)} \
+            or {j.rol for j in juego.jugadores}
         self.falta_tecnomante = "Tecnomante" not in roles
         self.falta_forjador = "Forjador" not in roles
         # Sin Biomante, abono para la planta de la Biosfera (misiones/guardia.py).
