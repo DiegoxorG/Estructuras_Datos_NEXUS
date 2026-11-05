@@ -36,6 +36,8 @@ class Espejo:
         self.b = bienvenida
         self.aliens = {}           # nombre -> objeto Alien del espejo
         self.pubs = {}             # id -> Publicacion del espejo (ver _publicaciones)
+        self._pasos_npc = {}       # id del NPC -> (posición, cuándo cambió, último paso)
+        self._agujas = {}          # id del jugador -> ((aguja, sentido) del servidor, cuándo llegó)
         self._reloj_ms = None      # para avanzar las animaciones con el tiempo real
         self._dt_ms = 0
         self.listo = False
@@ -106,6 +108,8 @@ class Espejo:
                 continue
             if objeto is not None:
                 cuerpo = {k: v for k, v in datos.items() if k != "ok"}
+                if nombre == "npcs" and isinstance(cuerpo.get("npcs"), list):
+                    self._npcs(objeto, cuerpo.pop("npcs"))
                 E.aplicar(objeto, cuerpo)
         for clave, nombre in LISTAS.items():
             datos = secciones.get(clave)
@@ -126,10 +130,65 @@ class Espejo:
             if len(lista) > len(nuevos):
                 del lista[len(nuevos):]
         self._presentacion(glob.get("presentacion"))
+        self._animar_npcs()
         orden = (secciones.get("pubs") or {}).get("orden")
         red = getattr(g, "nexus", None)
         if red is not None and orden is not None:
             red.publicaciones = [self._pub(i) for i in orden]
+
+    def _npcs(self, gestor, lista):
+        """Los prisioneros que caminan, por su cuenta (`nodo`): así uno que se
+        fue (rescatado) no se queda parado en el espejo y uno nuevo aparece.
+        Antes se copiaban por posición en la lista y, si cambiaba el largo, se
+        dejaba la lista vieja."""
+        from entidades.npcs import NPC
+        actuales = {getattr(n, "nodo", None): n for n in gestor.npcs}
+        nuevos = []
+        for datos in lista:
+            if not isinstance(datos, dict):
+                continue
+            npc = actuales.get(datos.get("nodo"))
+            if npc is None:
+                npc = NPC.__new__(NPC)
+                npc.__dict__.update({"hitbox": pygame.Rect(0, 0, 24, 20), "ruta": [], "burbuja": None,
+                                     "burbuja_ms": 0, "siguiendo": None, "juego": self.g,
+                                     "apariencia": None, "nodo": None, "usuario": ""})
+            E.aplicar(npc, datos)
+            if getattr(npc, "apariencia", None) is not None:
+                nuevos.append(npc)
+        gestor.npcs = nuevos
+
+    def _animar_npcs(self):
+        """Los prisioneros caminan con la animación del cliente: en el modo
+        local la avanza su `actualizar`, que el espejo no corre. Se mira cuánto
+        se movió cada uno (las posiciones llegan 30 veces por segundo, así que
+        "se está moviendo" dura un poco después de cada cambio)."""
+        import time
+        ahora = time.perf_counter()
+        quienes = list(getattr(getattr(self.g, "npcs", None), "npcs", None) or [])
+        cf = getattr(self.g, "cambiaformas", None)
+        if cf is not None and getattr(cf, "apariencia", None) is not None and hasattr(cf, "hitbox"):
+            quienes.append(cf)
+        vistos = set()
+        for quien in quienes:
+            ap = getattr(quien, "apariencia", None)
+            if ap is None or not hasattr(ap, "animar"):
+                continue
+            clave = id(quien)
+            vistos.add(clave)
+            centro = quien.hitbox.center
+            antes = self._pasos_npc.get(clave)
+            if antes is None or antes[0] != centro:
+                d = (centro[0] - antes[0][0], centro[1] - antes[0][1]) if antes else (0, 0)
+                antes = (centro, ahora, d if d != (0, 0) else (antes[2] if antes else (0, 0)))
+                self._pasos_npc[clave] = antes
+            camina = ahora - antes[1] < 0.15 and antes[2] != (0, 0)
+            try:
+                ap.animar(*(antes[2] if camina else (0, 0)), self._dt_ms)
+            except Exception:
+                pass
+        for clave in [c for c in self._pasos_npc if c not in vistos]:
+            del self._pasos_npc[clave]
 
     def _resolver(self, marca, identidad):
         if marca == "P":
@@ -231,9 +290,33 @@ class Espejo:
         j.escondite = (self.g.escondites[indice] if indice is not None
                        and indice < len(self.g.escondites) else None)
         j.linterna.angulo = pos[2] if pos else datos.get("lin", j.linterna.angulo)
+        self._aguja(j)
         arbol = getattr(j, "arbol", None)
         if arbol is not None:
             E.aplicar(arbol, {k[2:]: v for k, v in datos.items() if k.startswith("h.")})
+
+    def _aguja(self, j):
+        """La aguja del minijuego del escondite: llega 30 veces por segundo y
+        va rápido, así que entre instantánea e instantánea el cliente la sigue
+        moviendo él (rebotando igual que en minijuego_latidos.py). Lo que ve el
+        jugador es lo que se manda al servidor cuando presiona (cliente.py)."""
+        import time
+        mj = getattr(j, "minijuego", None)
+        if mj is None or not hasattr(mj, "aguja") or getattr(mj, "resultado", None) is not None:
+            self._agujas.pop(id(j), None)
+            return
+        servidor = (mj.aguja, mj.sentido)
+        visto = self._agujas.get(id(j))
+        ahora = time.perf_counter()
+        if visto is None or visto[0] != servidor:
+            visto = self._agujas[id(j)] = (servidor, ahora)
+        aguja = mj.aguja + mj.sentido * getattr(mj, "velocidad", 0.0) * min(0.12, ahora - visto[1])
+        if aguja >= 1:
+            mj.aguja, mj.sentido = 2 - aguja, -1
+        elif aguja <= 0:
+            mj.aguja, mj.sentido = -aguja, 1
+        else:
+            mj.aguja = aguja
 
     def _aliens(self, datos, interpolado):
         vistos = []

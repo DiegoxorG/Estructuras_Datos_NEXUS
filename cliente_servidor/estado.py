@@ -37,7 +37,8 @@ def _es_rect(valor):
 # dibujo se caía; un dict con jugadores de clave (red.vistas[jugador]) no
 # viajaba. Como clave de un dict van como texto: "@J:1".
 REFERENCIAS = {"Publicacion": ("P", "id"), "Jugador": ("J", "puesto"),
-               "Alien": ("A", "nombre"), "Sombra": ("A", "nombre"), "Cambiaformas": ("A", "nombre")}
+               "Alien": ("A", "nombre"), "Sombra": ("A", "nombre"), "Cambiaformas": ("A", "nombre"),
+               "Guardia": ("A", "nombre")}
 MARCAS = {marca for marca, _ in REFERENCIAS.values()}
 RESOLVER = None          # fn(marca, identidad) -> objeto del espejo (o None)
 
@@ -80,6 +81,61 @@ def _es_ref(datos):
     return (isinstance(datos, dict) and len(datos) == 1 and next(iter(datos)) in MARCAS)
 
 
+# Objetos chicos de DATOS que viajan enteros, con su clase: {"O": [clase,
+# {atributos}]}. Del otro lado se arma uno de esa clase (o se actualiza el
+# que ya había). Sin esto se perdían: el minijuego del escondite no le
+# aparecía al cliente, ni el disfraz nuevo del Cambiaformas. clase ->
+# (módulo, atributos que viajan; None = todos los de datos).
+CLASES = {
+    "MinijuegoLatidos": ("entidades.minijuego_latidos", None),
+    # De la apariencia solo QUIÉN es: la animación (reloj, dirección, paso)
+    # la lleva el cliente (espejo.py), si no tironearía con cada instantánea.
+    "Apariencia": ("entidades.npcs", ("estilo", "usuario", "numero", "sprite")),
+    # La red social de NEXUS: cambia en la partida (bots nuevos, cuentas que se
+    # reportan y se borran, colores). Sin esto la pestaña Red del cliente se
+    # quedaba como al principio.
+    "Grafo": ("Estructuras.grafo", None),
+}
+
+
+def _objeto(valor, profundidad):
+    regla = CLASES.get(type(valor).__name__)
+    if regla is None:
+        return None
+    _, campos = regla
+    datos = atributos(valor, profundidad=max(1, profundidad - 1))
+    if campos is not None:
+        datos = {k: v for k, v in datos.items() if k in campos}
+    return {"O": [type(valor).__name__, datos]}
+
+
+def _es_objeto(datos):
+    return (isinstance(datos, dict) and len(datos) == 1 and "O" in datos
+            and isinstance(datos["O"], list) and len(datos["O"]) == 2 and datos["O"][0] in CLASES)
+
+
+def _armar(datos, actual=None):
+    """{"O": [clase, atributos]} -> un objeto de esa clase (`actual` si ya lo es)."""
+    clase, atribs = datos["O"]
+    if actual is None or type(actual).__name__ != clase:
+        import importlib
+        cls = getattr(importlib.import_module(CLASES[clase][0]), clase)
+        actual = cls.__new__(cls)
+        if clase == "Apariencia":
+            # Lo que su __init__ pone y no viaja (la animación es del cliente).
+            from Movimiento.Personaje import DireccionSuave
+            actual.__dict__.update({"reloj_ms": 0, "direccion": "south", "fase": 0.0,
+                                    "moviendose": False, "_giro": DireccionSuave()})
+    # Cada atributo se pone de nuevo (no se mezcla): si en el servidor se
+    # borró algo de un dict (un nodo del grafo), aquí también.
+    for clave, v in atribs.items():
+        try:
+            setattr(actual, clave, a_python(v))
+        except (AttributeError, TypeError):
+            pass
+    return actual
+
+
 def extraer(valor, profundidad=4):
     """`valor` en forma de JSON, o NADA si no se puede (o no vale la pena)."""
     if valor is None or isinstance(valor, (bool, int, str)):
@@ -92,6 +148,11 @@ def extraer(valor, profundidad=4):
     ref = _referencia(valor)
     if ref is not None:
         return {ref[0]: ref[1]}
+    if profundidad <= 0:
+        return NADA
+    objeto = _objeto(valor, profundidad)
+    if objeto is not None:
+        return objeto
     if profundidad <= 0:
         return NADA
     if isinstance(valor, (set, frozenset)):
@@ -118,7 +179,7 @@ def extraer(valor, profundidad=4):
                 salida[clave] = e
         # Las claves "R" y "S" (o una marca de referencia) solas se
         # confundirían con un Rect, un set o una referencia.
-        if len(salida) == 1 and next(iter(salida)) in ("R", "S", *MARCAS):
+        if len(salida) == 1 and next(iter(salida)) in ("R", "S", "O", *MARCAS):
             return NADA
         return salida
     return NADA
@@ -154,6 +215,8 @@ def a_python(datos):
         if _es_ref(datos):
             marca, identidad = next(iter(datos.items()))
             return _resolver(marca, identidad)
+        if _es_objeto(datos):
+            return _armar(datos)
         return {_clave_python(k): a_python(v) for k, v in datos.items()}
     if isinstance(datos, list):
         return [a_python(v) for v in datos]
@@ -168,6 +231,8 @@ def _mezclar(actual, datos):
         return actual
     if _es_ref(datos):
         return a_python(datos)
+    if _es_objeto(datos):
+        return _armar(datos, actual)
     if isinstance(datos, dict) and not (len(datos) == 1 and next(iter(datos)) in ("R", "S")):
         if isinstance(actual, dict):
             for clave, v in datos.items():

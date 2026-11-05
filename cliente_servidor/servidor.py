@@ -74,7 +74,7 @@ DEL_JUEGO = ("tiempo_jugado_ms", "tiempo_restante_ms", "oscuridad", "mostrar_arb
 JUGADOR_NO = {"puesto", "esquema", "con_mando", "controles_nombre", "spawn", "puede_moverse",
               "velocidad_base", "nombre_personaje"}
 ALIEN_SI = ("accion", "alerta", "aturdido", "confundido", "cansado", "moviendose", "oculta",
-            "potencia_nexus", "descanso_ms")
+            "potencia_nexus", "descanso_ms", "comiendo", "disfrazado", "transformando_ms")
 
 
 class Teclas(dict):
@@ -96,6 +96,7 @@ class Buzon:
         self.ultimo_n = -1        # número de la última intención (para el ack)
         self.conectado = False
         self.quiere_completa = True   # la próxima instantánea a este va entera
+        self.aguja = None         # dónde vio la aguja del minijuego al presionar
 
     def sacar(self):
         with self.candado:
@@ -321,6 +322,8 @@ class Servidor:
                     pulsar = [a for a in mensaje.get("pulsar", ()) if a in PULSAR]
                     with buzon.candado:
                         buzon.mantener = mantener
+                        if "interactuar" in pulsar and isinstance(mensaje.get("aguja"), (int, float)):
+                            buzon.aguja = max(0.0, min(1.0, float(mensaje["aguja"])))
                         buzon.pulsar.extend(pulsar[:16])
                         del buzon.pulsar[:-32]      # que nadie llene la cola
                         if isinstance(mensaje.get("n"), int):
@@ -417,12 +420,18 @@ class Servidor:
                     teclas[tecla] = True
                 for tecla in jugador.personaje.controles.get(accion, ()):
                     teclas[tecla] = True
-            pulsados.append((jugador, pulsar))
+            with buzon.candado:
+                aguja, buzon.aguja = buzon.aguja, None
+            pulsados.append((jugador, pulsar, aguja))
         self.teclas = teclas
         # Lo pulsado va antes de actualizar, como en el modo local (primero
         # los eventos y después _actualizar_partida).
-        for jugador, pulsar in pulsados:
+        for jugador, pulsar, aguja in pulsados:
             for accion in pulsar:
+                if accion == "interactuar" and aguja is not None and getattr(jugador, "minijuego", None) is not None:
+                    # El acierto se juzga con la aguja que vio el jugador (ver
+                    # cliente.Sesion._extra), no con la de este cuadro.
+                    jugador.minijuego.aguja = aguja
                 self._pulsar(jugador, accion)
         return acks
 

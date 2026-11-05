@@ -15,7 +15,9 @@ dibujan ellos. La prueba pide:
   punto rojo"; una publicación del celular -> llegaba como None);
 - que los dos se vean casi igual al modo local (menos de 6 % de píxeles
   distintos: hay animaciones con el reloj y la interpolación va 50 ms atrás);
-- que nadie se desconecte.
+- que nadie se desconecte;
+- que el minijuego del escondite le aparezca al cliente y que los prisioneros
+  (NPC) caminen con su animación.
 
 Tarda ~1 minuto. Las capturas van a la carpeta temporal (o NEXUS_CAPTURAS).
 """
@@ -85,7 +87,10 @@ def escenas(g, forzar_fase_final):
         j1.personaje.hitbox.center = e["rect"].center
         j1.personaje.sync_sprite_from_hitbox()
         j1.esconderse(e)
-        g._alien_revisa(j1, g.aliens[0], e)
+        alien = g.aliens[0]
+        alien.escondite_objetivo = e           # (si no, el minijuego se corta: "se fue")
+        alien.hitbox.center = (e["rect"].centerx + 60, e["rect"].centery)
+        g._alien_revisa(j1, alien, e)
 
     def presentacion():
         limpiar()
@@ -187,6 +192,8 @@ def cliente():
         guardadas = set()
         fin = time.time() + PASO * (n + 2) / 60 + 20
         base = None
+        vio_minijuego = npc_camina = False
+        relojes_npc = set()
         while time.time() < fin and len(guardadas) < 2 * n:
             if base is None and os.path.exists(os.path.join(CARPETA, "base.txt")):
                 with open(os.path.join(CARPETA, "base.txt")) as f:
@@ -197,10 +204,20 @@ def cliente():
                 if base is None:
                     continue
                 k, resto = divmod((s.conexiones[0].cuadro or 0) - base, PASO)
+                espejo = s.espejo.g
+                if getattr(espejo.jugadores[0], "minijuego", None) is not None:
+                    vio_minijuego = True
+                for npc in getattr(espejo.npcs, "npcs", [])[:3]:
+                    npc_camina = npc_camina or npc.apariencia.moviendose
+                    relojes_npc.add(int(npc.apariencia.reloj_ms) // 100)
                 if 1 <= k <= n and resto >= CAPTURA + 3 and (k, i) not in guardadas:
                     guardadas.add((k, i))
                     pygame.image.save(pantallas[i], os.path.join(CARPETA, f"red_{k:02d}_J{i + 1}.png"))
             time.sleep(1 / 60)
+        # El minijuego del escondite le llega al cliente (antes el objeto no
+        # viajaba) y los prisioneros se animan (antes caminaban "congelados").
+        assert vio_minijuego, "el cliente nunca vio el minijuego del escondite"
+        assert npc_camina and len(relojes_npc) > 5, "los prisioneros del cliente no se animan"
         for i, s in enumerate(sesiones):
             assert not s.errores_vistos, f"el espejo de J{i + 1} falló: {s.errores_vistos}"
             assert all(c.reconexiones == 0 and c.situacion == "jugando" for c in s.conexiones), \

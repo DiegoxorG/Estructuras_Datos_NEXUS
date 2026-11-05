@@ -235,7 +235,7 @@ class Conexion:
             except OSError:
                 pass                    # el lector se da cuenta y reconecta
 
-    def mandar(self, mantener, pulsar):
+    def mandar(self, mantener, pulsar, extra=None):
         """Manda la intención si cambió, si hay algo pulsado o si ya pasó un rato."""
         if self.situacion != "jugando":
             return
@@ -251,7 +251,8 @@ class Conexion:
                 for viejo in sorted(self.enviadas)[:100]:
                     del self.enviadas[viejo]
         self.ultima = (mantener, ahora)
-        self._enviar({"tipo": "intencion", "n": self.n, "mantener": mantener, "pulsar": pulsar})
+        self._enviar({"tipo": "intencion", "n": self.n, "mantener": mantener, "pulsar": pulsar,
+                      **(extra or {})})
 
     def cortar(self):
         """Corta el socket sin avisar (para probar la reconexión)."""
@@ -459,7 +460,7 @@ class Sesion:
             else:
                 self.entrada.evento(ev)
         for conexion, (mantener, pulsar) in zip(self.conexiones, self.entrada.sacar()):
-            conexion.mandar(mantener, pulsar)
+            conexion.mandar(mantener, pulsar, self._extra(conexion, pulsar))
         vivas = [c for c in self.conexiones if c.viva]
         if not vivas:
             c = self.conexiones[0]
@@ -483,6 +484,21 @@ class Sesion:
         elif time.time() - getattr(self, "_esc", 0) < 2.5:
             self._cartel(pantalla, "Pulsa Esc otra vez para salir de la partida en red")
         return not self.motivo
+
+    def _extra(self, conexion, pulsar):
+        """Con el minijuego del escondite, dónde VIO la aguja el jugador al
+        presionar: el servidor juzga el acierto con eso. Si no, con el retraso
+        de la red (y el wifi) apretaba con la aguja en la franja y le contaba
+        fallo."""
+        if "interactuar" not in pulsar or self.espejo is None or not self.espejo.listo:
+            return None
+        jugadores = self.espejo.g.jugadores
+        if not 0 <= conexion.jugador < len(jugadores):
+            return None
+        mj = getattr(jugadores[conexion.jugador], "minijuego", None)
+        if mj is None or not hasattr(mj, "aguja"):
+            return None
+        return {"aguja": round(float(mj.aguja), 3)}
 
     def _presentacion_abierta(self):
         g = getattr(self.espejo, "g", None) if self.espejo is not None else None
